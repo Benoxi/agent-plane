@@ -1,9 +1,27 @@
+import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
-import { NonNegativeInt, PositiveInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import {
+  IsoDateTime,
+  NonNegativeInt,
+  PositiveInt,
+  ProjectId,
+  ThreadId,
+  TrimmedNonEmptyString,
+} from "./baseSchemas.ts";
+import {
+  ProviderInteractionMode,
+  RuntimeMode,
+  DEFAULT_PROVIDER_INTERACTION_MODE,
+  DEFAULT_RUNTIME_MODE,
+} from "./orchestration.ts";
 
 const PROJECT_SEARCH_ENTRIES_MAX_LIMIT = 200;
 const PROJECT_WRITE_FILE_PATH_MAX_LENGTH = 512;
 const PROJECT_READ_FILE_PATH_MAX_LENGTH = 512;
+export const PROJECT_CLAUDE_SESSIONS_MAX_LIMIT = 100;
+export const PROJECT_CLAUDE_SESSIONS_DEFAULT_LIMIT = 20;
+export const CLAUDE_SESSION_ID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 export const ProjectSearchEntriesInput = Schema.Struct({
   cwd: TrimmedNonEmptyString,
@@ -220,6 +238,99 @@ export class ProjectWriteFileError extends Schema.TaggedErrorClass<ProjectWriteF
       message:
         decodedProjectErrorMessage(props) ??
         `Failed to write workspace file '${props.relativePath}' in '${props.cwd}'.`,
+    } as any);
+  }
+}
+
+export const ClaudeSessionId = TrimmedNonEmptyString.check(
+  Schema.isPattern(CLAUDE_SESSION_ID_PATTERN),
+);
+export type ClaudeSessionId = typeof ClaudeSessionId.Type;
+
+export const ProjectClaudeSession = Schema.Struct({
+  sessionId: ClaudeSessionId,
+  path: TrimmedNonEmptyString,
+  updatedAt: IsoDateTime,
+  createdAt: Schema.optional(IsoDateTime),
+  sizeBytes: NonNegativeInt,
+  title: Schema.optional(TrimmedNonEmptyString),
+  firstUserMessage: Schema.optional(TrimmedNonEmptyString),
+});
+export type ProjectClaudeSession = typeof ProjectClaudeSession.Type;
+
+export const ProjectListClaudeSessionsInput = Schema.Struct({
+  cwd: TrimmedNonEmptyString,
+  projectId: ProjectId,
+  limit: Schema.optional(
+    PositiveInt.check(Schema.isLessThanOrEqualTo(PROJECT_CLAUDE_SESSIONS_MAX_LIMIT)),
+  ),
+});
+export type ProjectListClaudeSessionsInput = typeof ProjectListClaudeSessionsInput.Type;
+
+export const ProjectListClaudeSessionsResult = Schema.Struct({
+  cwd: TrimmedNonEmptyString,
+  encodedCwd: TrimmedNonEmptyString,
+  directory: TrimmedNonEmptyString,
+  sessions: Schema.Array(ProjectClaudeSession),
+  truncated: Schema.Boolean,
+});
+export type ProjectListClaudeSessionsResult = typeof ProjectListClaudeSessionsResult.Type;
+
+export const ProjectImportClaudeSessionInput = Schema.Struct({
+  cwd: TrimmedNonEmptyString,
+  projectId: ProjectId,
+  threadId: ThreadId,
+  sessionId: ClaudeSessionId,
+  title: Schema.optional(TrimmedNonEmptyString),
+  runtimeMode: RuntimeMode.pipe(Schema.withDecodingDefault(Effect.succeed(DEFAULT_RUNTIME_MODE))),
+  interactionMode: ProviderInteractionMode.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_PROVIDER_INTERACTION_MODE)),
+  ),
+});
+export type ProjectImportClaudeSessionInput = typeof ProjectImportClaudeSessionInput.Type;
+
+export const ProjectImportClaudeSessionResult = Schema.Struct({
+  threadId: ThreadId,
+  sessionId: ClaudeSessionId,
+});
+export type ProjectImportClaudeSessionResult = typeof ProjectImportClaudeSessionResult.Type;
+
+export const ProjectClaudeSessionImportFailure = Schema.Literals([
+  "claude_project_read_failed",
+  "claude_session_not_found",
+  "claude_session_invalid",
+  "claude_provider_unavailable",
+  "project_not_found",
+  "project_cwd_mismatch",
+  "thread_create_failed",
+  "provider_session_bind_failed",
+]);
+export type ProjectClaudeSessionImportFailure = typeof ProjectClaudeSessionImportFailure.Type;
+
+export class ProjectClaudeSessionImportError extends Schema.TaggedErrorClass<ProjectClaudeSessionImportError>()(
+  "ProjectClaudeSessionImportError",
+  {
+    cwd: Schema.optional(TrimmedNonEmptyString),
+    sessionId: Schema.optional(ClaudeSessionId),
+    failure: Schema.optional(ProjectClaudeSessionImportFailure),
+    detail: Schema.optional(TrimmedNonEmptyString),
+    message: TrimmedNonEmptyString,
+    cause: Schema.optional(Schema.Defect()),
+  },
+) {
+  // @effect-diagnostics-next-line overriddenSchemaConstructor:off
+  constructor(props: {
+    readonly cwd?: string;
+    readonly sessionId?: ClaudeSessionId;
+    readonly failure: ProjectClaudeSessionImportFailure;
+    readonly detail?: string;
+    readonly cause?: unknown;
+  }) {
+    super({
+      ...props,
+      message:
+        decodedProjectErrorMessage(props) ??
+        `Failed to import Claude Code session${props.sessionId ? ` '${props.sessionId}'` : ""}.`,
     } as any);
   }
 }

@@ -66,6 +66,12 @@ export function createProjectEnvironmentAtoms<R, E>(
       staleTimeMs: 30_000,
       idleTtlMs: 5 * 60_000,
     }),
+    listClaudeSessions: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:projects:list-claude-sessions",
+      tag: WS_METHODS.projectsListClaudeSessions,
+      staleTimeMs: 15_000,
+      idleTtlMs: 2 * 60_000,
+    }),
     readFile: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:projects:read-file",
       tag: WS_METHODS.projectsReadFile,
@@ -100,6 +106,16 @@ export function createProjectEnvironmentAtoms<R, E>(
         mode: "serial",
         key: ({ environmentId, input }) =>
           JSON.stringify([environmentId, input.cwd, input.relativePath]),
+      },
+    }),
+    importClaudeSession: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:projects:import-claude-session",
+      tag: WS_METHODS.projectsImportClaudeSession,
+      scheduler: projectScheduler,
+      concurrency: {
+        mode: "serial",
+        key: ({ environmentId, input }) =>
+          JSON.stringify([environmentId, input.projectId, input.sessionId]),
       },
     }),
   };
