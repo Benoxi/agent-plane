@@ -14,6 +14,8 @@
 - `bun run dist:desktop:dmg` — Builds a shareable macOS `.dmg` into `./release`.
 - `bun run dist:desktop:dmg:x64` — Builds an Intel macOS `.dmg`.
 - `bun run dist:desktop:linux` — Builds a Linux AppImage into `./release`.
+- `bun run dist:desktop:fedora` — Builds a Fedora-focused Linux AppImage into `./release-fedora`.
+- `bun run install:desktop:fedora` — Installs the latest Fedora AppImage into `~/.local/share/t3code/stable` and creates a stable launcher that uses `~/.t3/stable`.
 - `bun run dist:desktop:win` — Builds a Windows NSIS installer into `./release`.
 
 ## Desktop `.dmg` packaging notes
