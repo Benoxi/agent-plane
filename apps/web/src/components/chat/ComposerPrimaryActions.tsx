@@ -34,7 +34,7 @@ interface ComposerPrimaryActionsProps {
   onPreviousPendingQuestion: () => void;
   onInterrupt: () => void;
   onImplementPlanInNewThread: () => void;
-  onSchedule: (delaySeconds: number) => void;
+  onSchedule: (delaySeconds: number) => void | Promise<void>;
 }
 
 export const formatPendingPrimaryActionLabel = (input: {
@@ -244,7 +244,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
               if (!Number.isFinite(parsedDelaySeconds) || parsedDelaySeconds <= 0) {
                 return;
               }
-              onSchedule(parsedDelaySeconds);
+              void onSchedule(parsedDelaySeconds);
               setScheduleOpen(false);
             }}
           >

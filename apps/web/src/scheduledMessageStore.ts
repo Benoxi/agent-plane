@@ -7,6 +7,7 @@ import {
   RuntimeMode,
   type ScopedThreadRef,
   ThreadId,
+  type UploadChatAttachment,
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 import { useSyncExternalStore } from "react";
@@ -21,12 +22,33 @@ export type ScheduledMessageStatus = typeof ScheduledMessageStatus.Type;
 export const ScheduledMessageSource = Schema.Literals(["manual", "rate-limit-auto-continue"]);
 export type ScheduledMessageSource = typeof ScheduledMessageSource.Type;
 
+const ScheduledUploadChatImageAttachment = Schema.Struct({
+  type: Schema.Literal("image"),
+  name: Schema.String,
+  mimeType: Schema.String,
+  sizeBytes: Schema.Number,
+  dataUrl: Schema.String,
+});
+
+const ScheduledUploadChatAttachment = Schema.Union([ScheduledUploadChatImageAttachment]);
+
+export const ScheduledMessageSummary = Schema.Struct({
+  imageCount: Schema.optional(Schema.Number),
+  terminalContextCount: Schema.optional(Schema.Number),
+  elementContextCount: Schema.optional(Schema.Number),
+  previewAnnotationCount: Schema.optional(Schema.Number),
+  reviewCommentCount: Schema.optional(Schema.Number),
+});
+export type ScheduledMessageSummary = typeof ScheduledMessageSummary.Type;
+
 export const ScheduledMessage = Schema.Struct({
   id: Schema.String,
   environmentId: EnvironmentId,
   threadId: ThreadId,
   text: Schema.String,
   outgoingText: Schema.String,
+  attachments: Schema.optional(Schema.Array(ScheduledUploadChatAttachment)),
+  summary: Schema.optional(ScheduledMessageSummary),
   titleSeed: Schema.String,
   modelSelection: ModelSelectionSchema,
   runtimeMode: RuntimeMode,
@@ -50,6 +72,8 @@ interface ScheduleThreadMessageInput {
   threadId: ThreadId;
   text: string;
   outgoingText: string;
+  attachments?: ReadonlyArray<UploadChatAttachment>;
+  summary?: ScheduledMessageSummary;
   titleSeed: string;
   modelSelection: ModelSelection;
   runtimeMode: ScheduledMessage["runtimeMode"];
@@ -222,6 +246,8 @@ export function scheduleThreadMessage(input: ScheduleThreadMessageInput): Schedu
     threadId: input.threadId,
     text: input.text,
     outgoingText: input.outgoingText,
+    attachments: [...(input.attachments ?? [])],
+    summary: input.summary,
     titleSeed: input.titleSeed,
     modelSelection: input.modelSelection,
     runtimeMode: input.runtimeMode,
