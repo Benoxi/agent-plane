@@ -7,6 +7,7 @@ import { describe, expect, it } from "@effect/vitest";
 import {
   DEFAULT_PROVIDER_INTERACTION_MODE,
   DEFAULT_RUNTIME_MODE,
+  type OrchestrationCommand,
   ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
@@ -42,15 +43,33 @@ function makeProjectShell(workspaceRoot: string) {
   };
 }
 
-function makeService(workspaceRoot: string) {
+function makeService(
+  workspaceRoot: string,
+  options: {
+    readonly activeThreadIds?: ReadonlyArray<ThreadId>;
+    readonly bindings?: ReadonlyArray<any>;
+    readonly commands?: Array<OrchestrationCommand>;
+    readonly upserts?: Array<any>;
+  } = {},
+) {
   return makeClaudeSessionImport({
     orchestrationEngine: {
-      dispatch: () => Effect.void,
+      dispatch: (command: OrchestrationCommand) =>
+        Effect.sync(() => {
+          options.commands?.push(command);
+          return { sequence: options.commands?.length ?? 1 };
+        }),
     } as any,
     projectionSnapshotQuery: {
       getProjectShellById: (projectId: ProjectId) =>
         Effect.succeed(
           projectId === PROJECT_ID ? Option.some(makeProjectShell(workspaceRoot)) : Option.none(),
+        ),
+      getThreadShellById: (threadId: ThreadId) =>
+        Effect.succeed(
+          (options.activeThreadIds ?? [THREAD_ID]).includes(threadId)
+            ? Option.some({ id: threadId })
+            : Option.none(),
         ),
     } as any,
     providerRegistry: {
@@ -78,8 +97,11 @@ function makeService(workspaceRoot: string) {
       ]),
     } as any,
     providerSessionDirectory: {
-      upsert: () => Effect.void,
-      listBindings: () => Effect.succeed([]),
+      upsert: (binding: any) =>
+        Effect.sync(() => {
+          options.upserts?.push(binding);
+        }),
+      listBindings: () => Effect.succeed(options.bindings ?? []),
     } as any,
   });
 }
@@ -274,6 +296,185 @@ describe("ClaudeSessionImport", () => {
           .pipe(Effect.flip);
 
         expect(error.failure).toBe("claude_session_invalid");
+      }),
+    ),
+  );
+
+  it.effect("imports visible Claude transcript messages into the created thread", () =>
+    withClaudeConfigDir((configDir) =>
+      Effect.gen(function* () {
+        const workspaceRoot = yield* Effect.promise(() =>
+          NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-project-")),
+        );
+        yield* Effect.addFinalizer(() =>
+          Effect.promise(() => NodeFSP.rm(workspaceRoot, { force: true, recursive: true })),
+        );
+        yield* Effect.promise(() =>
+          writeClaudeSession({
+            configDir,
+            cwd: workspaceRoot,
+            sessionId: SESSION_ID_1,
+            text: [
+              '{"type":"summary","summary":"Imported transcript"}',
+              '{"type":"user","uuid":"user-message","timestamp":"2026-01-01T00:00:00.000Z","message":{"role":"user","content":[{"type":"text","text":"Please continue"},{"type":"tool_result","content":"hidden tool output"},{"type":"text","text":"with the UI history."}]}}',
+              '{"type":"assistant","uuid":"assistant-message","timestamp":"2026-01-01T00:00:01.000Z","message":{"role":"assistant","content":[{"type":"thinking","text":"hidden thinking"},{"type":"text","text":"I can resume from here."}]}}',
+              '{"type":"assistant","uuid":"tool-only","timestamp":"2026-01-01T00:00:02.000Z","message":{"role":"assistant","content":[{"type":"tool_use","name":"Bash","input":{}}]}}',
+              '{"type":"user","uuid":"sidechain-message","isSidechain":true,"timestamp":"2026-01-01T00:00:03.000Z","message":{"role":"user","content":[{"type":"text","text":"Do not render sidechain text."}]}}',
+            ].join("\n"),
+            mtime: 1_767_312_000,
+          }),
+        );
+
+        const commands: Array<OrchestrationCommand> = [];
+        const service = makeService(workspaceRoot, { commands });
+        const result = yield* service.importSession({
+          cwd: workspaceRoot,
+          projectId: PROJECT_ID,
+          threadId: THREAD_ID,
+          sessionId: SESSION_ID_1,
+          runtimeMode: DEFAULT_RUNTIME_MODE,
+          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        });
+        const messageImports = commands.filter(
+          (command) => command.type === "thread.message.import",
+        );
+
+        expect(result.threadId).toBe(THREAD_ID);
+        expect(commands.map((command) => command.type)).toEqual([
+          "thread.create",
+          "thread.message.import",
+          "thread.message.import",
+        ]);
+        expect(messageImports).toHaveLength(2);
+        expect(messageImports[0]).toMatchObject({
+          commandId: `import-claude-message:${THREAD_ID}:user-message`,
+          messageId: `claude:${THREAD_ID}:${SESSION_ID_1}:user-message`,
+          threadId: THREAD_ID,
+          role: "user",
+          text: "Please continue\n\nwith the UI history.",
+          messageCreatedAt: "2026-01-01T00:00:00.000Z",
+          createdAt: expect.any(String),
+        });
+        expect(messageImports[0]?.createdAt).not.toBe(messageImports[0]?.messageCreatedAt);
+        expect(messageImports[1]).toMatchObject({
+          commandId: `import-claude-message:${THREAD_ID}:assistant-message`,
+          messageId: `claude:${THREAD_ID}:${SESSION_ID_1}:assistant-message`,
+          threadId: THREAD_ID,
+          role: "assistant",
+          text: "I can resume from here.",
+          messageCreatedAt: "2026-01-01T00:00:01.000Z",
+          createdAt: expect.any(String),
+        });
+      }),
+    ),
+  );
+
+  it.effect("backfills transcript messages when the Claude session was already imported", () =>
+    withClaudeConfigDir((configDir) =>
+      Effect.gen(function* () {
+        const workspaceRoot = yield* Effect.promise(() =>
+          NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-project-")),
+        );
+        yield* Effect.addFinalizer(() =>
+          Effect.promise(() => NodeFSP.rm(workspaceRoot, { force: true, recursive: true })),
+        );
+        yield* Effect.promise(() =>
+          writeClaudeSession({
+            configDir,
+            cwd: workspaceRoot,
+            sessionId: SESSION_ID_1,
+            text: '{"type":"user","uuid":"existing-user-message","timestamp":"2026-01-01T00:00:00.000Z","message":{"role":"user","content":"Backfill the existing imported thread."}}',
+            mtime: 1_767_312_000,
+          }),
+        );
+
+        const commands: Array<OrchestrationCommand> = [];
+        const upserts: Array<any> = [];
+        const service = makeService(workspaceRoot, {
+          commands,
+          upserts,
+          bindings: [
+            {
+              threadId: THREAD_ID,
+              provider: CLAUDE_PROVIDER,
+              resumeCursor: { resume: SESSION_ID_1 },
+              runtimePayload: { cwd: workspaceRoot },
+            },
+          ],
+        });
+        const result = yield* service.importSession({
+          cwd: workspaceRoot,
+          projectId: PROJECT_ID,
+          threadId: ThreadId.make("new-thread-id-that-is-not-used"),
+          sessionId: SESSION_ID_1,
+          runtimeMode: DEFAULT_RUNTIME_MODE,
+          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        });
+
+        expect(result.threadId).toBe(THREAD_ID);
+        expect(commands.map((command) => command.type)).toEqual(["thread.message.import"]);
+        expect(commands[0]).toMatchObject({
+          threadId: THREAD_ID,
+          role: "user",
+          text: "Backfill the existing imported thread.",
+          messageCreatedAt: "2026-01-01T00:00:00.000Z",
+          createdAt: expect.any(String),
+        });
+        expect(upserts).toHaveLength(0);
+      }),
+    ),
+  );
+
+  it.effect("ignores an existing import binding when the bound thread is deleted", () =>
+    withClaudeConfigDir((configDir) =>
+      Effect.gen(function* () {
+        const workspaceRoot = yield* Effect.promise(() =>
+          NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-project-")),
+        );
+        yield* Effect.addFinalizer(() =>
+          Effect.promise(() => NodeFSP.rm(workspaceRoot, { force: true, recursive: true })),
+        );
+        yield* Effect.promise(() =>
+          writeClaudeSession({
+            configDir,
+            cwd: workspaceRoot,
+            sessionId: SESSION_ID_1,
+            text: '{"type":"user","uuid":"new-import-user-message","timestamp":"2026-01-01T00:00:00.000Z","message":{"role":"user","content":"Import into a replacement thread."}}',
+            mtime: 1_767_312_000,
+          }),
+        );
+
+        const replacementThreadId = ThreadId.make("replacement-thread-id");
+        const commands: Array<OrchestrationCommand> = [];
+        const upserts: Array<any> = [];
+        const service = makeService(workspaceRoot, {
+          activeThreadIds: [replacementThreadId],
+          commands,
+          upserts,
+          bindings: [
+            {
+              threadId: THREAD_ID,
+              provider: CLAUDE_PROVIDER,
+              resumeCursor: { resume: SESSION_ID_1 },
+              runtimePayload: { cwd: workspaceRoot },
+            },
+          ],
+        });
+        const result = yield* service.importSession({
+          cwd: workspaceRoot,
+          projectId: PROJECT_ID,
+          threadId: replacementThreadId,
+          sessionId: SESSION_ID_1,
+          runtimeMode: DEFAULT_RUNTIME_MODE,
+          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        });
+
+        expect(result.threadId).toBe(replacementThreadId);
+        expect(commands.map((command) => command.type)).toEqual([
+          "thread.create",
+          "thread.message.import",
+        ]);
+        expect(upserts).toHaveLength(1);
       }),
     ),
   );

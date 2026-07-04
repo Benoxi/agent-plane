@@ -1,7 +1,9 @@
 // @effect-diagnostics nodeBuiltinImport:off
+import * as NodeFS from "node:fs";
 import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
+import * as NodeReadlinePromises from "node:readline/promises";
 
 import {
   ClaudeSessionId,
@@ -9,6 +11,8 @@ import {
   DEFAULT_MODEL_BY_PROVIDER,
   DEFAULT_PROVIDER_INTERACTION_MODE,
   DEFAULT_RUNTIME_MODE,
+  MessageId,
+  type OrchestrationMessageRole,
   PROJECT_CLAUDE_SESSIONS_DEFAULT_LIMIT,
   type ProjectClaudeSession,
   ProjectClaudeSessionImportError,
@@ -35,6 +39,16 @@ const CLAUDE_DRIVER = ProviderDriverKind.make("claudeAgent");
 const CLAUDE_SESSION_CHUNK_BYTES = 64 * 1024;
 const CLAUDE_SESSION_LABEL_MAX_CHARS = 160;
 const CLAUDE_SESSION_SUMMARY_CONCURRENCY = 16;
+const CLAUDE_TRANSCRIPT_IMPORT_MAX_TOTAL_CHARS = 2_000_000;
+const CLAUDE_TRANSCRIPT_IMPORT_MAX_MESSAGE_CHARS = 128_000;
+const CLAUDE_TRANSCRIPT_IMPORT_MAX_MESSAGES = 2_000;
+
+interface ClaudeTranscriptMessage {
+  readonly sourceId: string;
+  readonly role: OrchestrationMessageRole;
+  readonly text: string;
+  readonly createdAt: string;
+}
 
 export interface ClaudeSessionImportService {
   readonly list: (
@@ -113,12 +127,27 @@ export function makeClaudeSessionImport(input: {
       input.sessionId,
       sessionFile,
     );
+    const transcriptMessages = yield* readClaudeTranscriptMessages({
+      cwd: input.cwd,
+      filePath: sessionFile,
+      sessionId: input.sessionId,
+    });
+    const importCreatedAt = DateTime.formatIso(yield* DateTime.now);
     const existingThreadId = yield* findExistingImportedThread({
       cwd: location.cwd,
+      projectionSnapshotQuery,
       providerSessionDirectory,
       sessionId: input.sessionId,
     });
     if (existingThreadId !== null) {
+      yield* importClaudeTranscriptMessages({
+        createdAt: importCreatedAt,
+        cwd: input.cwd,
+        messages: transcriptMessages,
+        orchestrationEngine,
+        sessionId: input.sessionId,
+        threadId: existingThreadId,
+      });
       return {
         threadId: existingThreadId,
         sessionId: input.sessionId,
@@ -134,7 +163,6 @@ export function makeClaudeSessionImport(input: {
       provider.instanceId,
       provider.models[0]?.slug ?? DEFAULT_MODEL_BY_PROVIDER[CLAUDE_DRIVER] ?? "claude-sonnet-5",
     );
-    const createdAt = DateTime.formatIso(yield* DateTime.now);
     const runtimeMode = input.runtimeMode ?? DEFAULT_RUNTIME_MODE;
     const interactionMode = input.interactionMode ?? DEFAULT_PROVIDER_INTERACTION_MODE;
     const title =
@@ -155,7 +183,7 @@ export function makeClaudeSessionImport(input: {
         interactionMode,
         branch: null,
         worktreePath: null,
-        createdAt,
+        createdAt: importCreatedAt,
       })
       .pipe(
         Effect.mapError(
@@ -217,6 +245,15 @@ export function makeClaudeSessionImport(input: {
         ),
         Effect.catch((error) => rollbackImportedThread.pipe(Effect.andThen(Effect.fail(error)))),
       );
+
+    yield* importClaudeTranscriptMessages({
+      createdAt: importCreatedAt,
+      cwd: input.cwd,
+      messages: transcriptMessages,
+      orchestrationEngine,
+      sessionId: input.sessionId,
+      threadId: input.threadId,
+    });
 
     return {
       threadId: input.threadId,
@@ -337,6 +374,7 @@ function readClaudeProjectEntries(
 }
 
 function findExistingImportedThread(input: {
+  readonly projectionSnapshotQuery: ProjectionSnapshotQuery.ProjectionSnapshotQuery["Service"];
   readonly providerSessionDirectory: ProviderSessionDirectory.ProviderSessionDirectory["Service"];
   readonly cwd: string;
   readonly sessionId: ClaudeSessionId;
@@ -352,15 +390,36 @@ function findExistingImportedThread(input: {
           cause,
         }),
     ),
-    Effect.map((bindings) => {
-      const existing = bindings.find(
-        (binding) =>
-          binding.provider === CLAUDE_DRIVER &&
-          readResumeCursor(binding.resumeCursor) === input.sessionId &&
-          readRuntimePayloadCwd(binding.runtimePayload) === input.cwd,
-      );
-      return existing?.threadId ?? null;
-    }),
+    Effect.flatMap((bindings) =>
+      Effect.gen(function* () {
+        const candidates = bindings.filter(
+          (binding) =>
+            binding.provider === CLAUDE_DRIVER &&
+            readResumeCursor(binding.resumeCursor) === input.sessionId &&
+            readRuntimePayloadCwd(binding.runtimePayload) === input.cwd,
+        );
+        for (const candidate of candidates) {
+          const activeThread = yield* input.projectionSnapshotQuery
+            .getThreadShellById(candidate.threadId)
+            .pipe(
+              Effect.mapError(
+                (cause) =>
+                  new ProjectClaudeSessionImportError({
+                    cwd: input.cwd,
+                    sessionId: input.sessionId,
+                    failure: "claude_project_read_failed",
+                    detail: "Failed to inspect existing imported Claude thread.",
+                    cause,
+                  }),
+              ),
+            );
+          if (Option.isSome(activeThread)) {
+            return candidate.threadId;
+          }
+        }
+        return null;
+      }),
+    ),
   );
 }
 
@@ -515,6 +574,192 @@ export function summarizeClaudeSessionChunk(input: string): {
     title: title ?? firstUserMessage,
     firstUserMessage,
   };
+}
+
+function importClaudeTranscriptMessages(input: {
+  readonly createdAt: string;
+  readonly cwd: string;
+  readonly messages: ReadonlyArray<ClaudeTranscriptMessage>;
+  readonly orchestrationEngine: OrchestrationEngine.OrchestrationEngineService["Service"];
+  readonly sessionId: ClaudeSessionId;
+  readonly threadId: ThreadId;
+}): Effect.Effect<void, ProjectClaudeSessionImportError> {
+  return Effect.gen(function* () {
+    for (const message of input.messages) {
+      yield* input.orchestrationEngine
+        .dispatch({
+          type: "thread.message.import",
+          commandId: CommandId.make(`import-claude-message:${input.threadId}:${message.sourceId}`),
+          threadId: input.threadId,
+          messageId: MessageId.make(
+            `claude:${input.threadId}:${input.sessionId}:${message.sourceId}`,
+          ),
+          role: message.role,
+          text: message.text,
+          messageCreatedAt: message.createdAt,
+          createdAt: input.createdAt,
+        })
+        .pipe(
+          Effect.mapError(
+            (cause) =>
+              new ProjectClaudeSessionImportError({
+                cwd: input.cwd,
+                sessionId: input.sessionId,
+                failure: "claude_transcript_import_failed",
+                detail: "Failed to import Claude transcript messages.",
+                cause,
+              }),
+          ),
+        );
+    }
+  });
+}
+
+function readClaudeTranscriptMessages(input: {
+  readonly cwd: string;
+  readonly filePath: string;
+  readonly sessionId: ClaudeSessionId;
+}): Effect.Effect<ReadonlyArray<ClaudeTranscriptMessage>, ProjectClaudeSessionImportError> {
+  return Effect.tryPromise({
+    try: async () => {
+      const stat = await NodeFSP.lstat(input.filePath);
+      const fallbackCreatedAt = stat.mtime.toISOString();
+      const stream = NodeFS.createReadStream(input.filePath, { encoding: "utf8" });
+      const lines = NodeReadlinePromises.createInterface({
+        input: stream,
+        crlfDelay: Infinity,
+      });
+      const messages: Array<ClaudeTranscriptMessage> = [];
+      let lineNumber = 0;
+      let lastMessageCreatedAtMs: number | null = null;
+      let totalChars = 0;
+      try {
+        for await (const line of lines) {
+          lineNumber += 1;
+          const trimmed = line.trim();
+          if (trimmed.length === 0) continue;
+          const parsed = parseRecord(trimmed);
+          if (!parsed) continue;
+          const message = readClaudeTranscriptMessage({
+            fallbackCreatedAt,
+            lastMessageCreatedAtMs,
+            lineNumber,
+            record: parsed,
+          });
+          if (message !== null) {
+            lastMessageCreatedAtMs = Date.parse(message.createdAt);
+            messages.push(message);
+            totalChars += message.text.length;
+            while (
+              messages.length > CLAUDE_TRANSCRIPT_IMPORT_MAX_MESSAGES ||
+              totalChars > CLAUDE_TRANSCRIPT_IMPORT_MAX_TOTAL_CHARS
+            ) {
+              const removed = messages.shift();
+              if (removed === undefined) break;
+              totalChars -= removed.text.length;
+            }
+          }
+        }
+      } finally {
+        lines.close();
+      }
+      return messages;
+    },
+    catch: (cause) =>
+      new ProjectClaudeSessionImportError({
+        cwd: input.cwd,
+        sessionId: input.sessionId,
+        failure: "claude_transcript_import_failed",
+        detail: `Failed to read Claude session transcript '${input.sessionId}'.`,
+        cause,
+      }),
+  });
+}
+
+function readClaudeTranscriptMessage(input: {
+  readonly fallbackCreatedAt: string;
+  readonly lastMessageCreatedAtMs: number | null;
+  readonly lineNumber: number;
+  readonly record: Record<string, any>;
+}): ClaudeTranscriptMessage | null {
+  if (input.record.isSidechain === true) {
+    return null;
+  }
+  const role = readClaudeTranscriptRole(input.record);
+  if (role === null) {
+    return null;
+  }
+  const text = normalizeTranscriptText(
+    extractTranscriptText(input.record.message?.content ?? input.record.content),
+  );
+  if (text === null) {
+    return null;
+  }
+  const uuid = typeof input.record.uuid === "string" ? input.record.uuid.trim() : "";
+  return {
+    sourceId: uuid.length > 0 ? uuid : `${role}:${input.lineNumber}`,
+    role,
+    text,
+    createdAt: normalizeMonotonicIsoDateTime({
+      fallback: input.fallbackCreatedAt,
+      lastTimestampMs: input.lastMessageCreatedAtMs,
+      value: input.record.timestamp,
+    }),
+  };
+}
+
+function readClaudeTranscriptRole(record: Record<string, any>): OrchestrationMessageRole | null {
+  const role = record.message?.role ?? record.role ?? record.type;
+  if (role === "user" || role === "assistant") {
+    return role;
+  }
+  return null;
+}
+
+function extractTranscriptText(content: unknown): string | null {
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return null;
+  const parts: Array<string> = [];
+  for (const item of content) {
+    if (typeof item === "string") {
+      parts.push(item);
+    } else if (item && typeof item === "object") {
+      const record = item as Record<string, unknown>;
+      if (record.type === "text" && typeof record.text === "string") {
+        parts.push(record.text);
+      }
+    }
+  }
+  return parts.length > 0 ? parts.join("\n\n") : null;
+}
+
+function normalizeTranscriptText(value: string | null): string | null {
+  const normalized = value?.replace(/\r\n?/g, "\n").trim() ?? "";
+  if (normalized.length === 0) return null;
+  if (normalized.length <= CLAUDE_TRANSCRIPT_IMPORT_MAX_MESSAGE_CHARS) {
+    return normalized;
+  }
+  return `${normalized.slice(0, CLAUDE_TRANSCRIPT_IMPORT_MAX_MESSAGE_CHARS).trimEnd()}\n\n[Imported transcript message truncated.]`;
+}
+
+function normalizeMonotonicIsoDateTime(input: {
+  readonly fallback: string;
+  readonly lastTimestampMs: number | null;
+  readonly value: unknown;
+}): string {
+  const candidate =
+    typeof input.value === "string" && input.value.trim() ? input.value : input.fallback;
+  const parsedCandidate = Date.parse(candidate);
+  const base = Number.isNaN(parsedCandidate) ? input.fallback : candidate;
+  const parsedBase = Date.parse(base);
+  const baseTimestampMs = Number.isNaN(parsedBase) ? Date.parse(input.fallback) : parsedBase;
+  const nextTimestampMs =
+    input.lastTimestampMs !== null && baseTimestampMs <= input.lastTimestampMs
+      ? input.lastTimestampMs + 1
+      : baseTimestampMs;
+  return DateTime.formatIso(
+    DateTime.mapEpochMillis(DateTime.makeUnsafe(base), () => nextTimestampMs),
+  );
 }
 
 function parseRecord(input: string): Record<string, any> | null {

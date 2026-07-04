@@ -303,6 +303,7 @@ export const ProjectClaudeSessionImportFailure = Schema.Literals([
   "project_not_found",
   "project_cwd_mismatch",
   "thread_create_failed",
+  "claude_transcript_import_failed",
   "provider_session_bind_failed",
 ]);
 export type ProjectClaudeSessionImportFailure = typeof ProjectClaudeSessionImportFailure.Type;
