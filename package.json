@@ -32,6 +32,7 @@
     "dist:desktop:linux": "node scripts/build-desktop-artifact.ts --platform linux --target AppImage --arch x64",
     "dist:desktop:fedora": "node scripts/build-desktop-artifact.ts --platform linux --target AppImage --arch x64 --output-dir release-fedora",
     "install:desktop:fedora": "node scripts/install-fedora-desktop.mjs",
+    "refresh:desktop:fedora": "node scripts/refresh-fedora-desktop.mjs",
     "dist:desktop:win": "node scripts/build-desktop-artifact.ts --platform win --target nsis",
     "dist:desktop:win:arm64": "node scripts/build-desktop-artifact.ts --platform win --target nsis --arch arm64",
     "dist:desktop:win:x64": "node scripts/build-desktop-artifact.ts --platform win --target nsis --arch x64",

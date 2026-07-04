@@ -16,6 +16,7 @@
 - `pnpm run dist:desktop:linux` — Builds a Linux AppImage into `./release`.
 - `pnpm run dist:desktop:fedora` — Builds a Fedora-focused Linux AppImage into `./release-fedora`.
 - `pnpm run install:desktop:fedora` — Installs the latest Fedora AppImage into `~/.local/share/t3code/stable` and creates a launcher that shares the default `~/.t3` state with the installed desktop app.
+- `pnpm run refresh:desktop:fedora` — Builds the Fedora AppImage, closes running T3 Code desktop processes after a successful build, installs the refreshed AppImage, and launches it.
 - `pnpm run dist:desktop:win` — Builds a Windows NSIS installer into `./release`.
 
 ## Desktop `.dmg` packaging notes
