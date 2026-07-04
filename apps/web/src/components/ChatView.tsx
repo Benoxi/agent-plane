@@ -249,6 +249,12 @@ import {
   resolveServerConfigVersionMismatch,
 } from "../versionSkew";
 import { useAssetUrls } from "../assets/assetUrls";
+import {
+  removeScheduledMessage,
+  scheduleThreadMessage,
+  useScheduledMessagesForThread,
+} from "../scheduledMessageStore";
+import { createStartedThreadTextTurnInput } from "../threadSendExecution";
 
 const IMAGE_ONLY_BOOTSTRAP_PROMPT =
   "[User attached one or more images without additional text. Respond using the conversation context and the attached image(s).]";
@@ -1286,6 +1292,7 @@ function ChatViewContent(props: ChatViewProps) {
     () => (activeThread ? scopeThreadRef(activeThread.environmentId, activeThread.id) : null),
     [activeThread],
   );
+  const scheduledMessages = useScheduledMessagesForThread(activeThreadRef);
   const activeThreadKey = activeThreadRef ? scopedThreadKey(activeThreadRef) : null;
   const [timelineAnchor, setTimelineAnchor] = useState<{
     readonly threadKey: string | null;
@@ -4238,6 +4245,93 @@ function ChatViewContent(props: ChatViewProps) {
     }
   };
 
+  const onScheduleMessage = useCallback(
+    (delaySeconds: number) => {
+      if (!activeThread || !isServerThread) {
+        return;
+      }
+
+      const sendCtx = composerRef.current?.getSendContext();
+      if (!sendCtx) {
+        return;
+      }
+
+      const {
+        images: composerImages,
+        terminalContexts: composerTerminalContexts,
+        elementContexts: composerElementContexts,
+        previewAnnotations: composerPreviewAnnotations,
+        reviewComments: composerReviewComments,
+        selectedProvider: ctxSelectedProvider,
+        selectedModel: ctxSelectedModel,
+        selectedProviderModels: ctxSelectedProviderModels,
+        selectedPromptEffort: ctxSelectedPromptEffort,
+        selectedModelSelection: ctxSelectedModelSelection,
+      } = sendCtx;
+      const promptForSend = promptRef.current;
+      const { trimmedPrompt } = deriveComposerSendState({
+        prompt: promptForSend,
+        imageCount: composerImages.length,
+        terminalContexts: composerTerminalContexts,
+        elementContextCount:
+          composerElementContexts.length +
+          composerPreviewAnnotations.length +
+          composerReviewComments.length,
+      });
+
+      if (
+        trimmedPrompt.length === 0 ||
+        composerImages.length > 0 ||
+        composerTerminalContexts.length > 0 ||
+        composerElementContexts.length > 0 ||
+        composerPreviewAnnotations.length > 0 ||
+        composerReviewComments.length > 0
+      ) {
+        return;
+      }
+
+      const scheduledMessage = scheduleThreadMessage({
+        environmentId: activeThread.environmentId,
+        threadId: activeThread.id,
+        text: trimmedPrompt,
+        outgoingText: formatOutgoingPrompt({
+          provider: ctxSelectedProvider,
+          model: ctxSelectedModel,
+          models: ctxSelectedProviderModels,
+          effort: ctxSelectedPromptEffort,
+          text: trimmedPrompt,
+        }),
+        titleSeed: activeThread.title,
+        modelSelection: ctxSelectedModelSelection,
+        runtimeMode,
+        interactionMode,
+        delaySeconds,
+      });
+
+      promptRef.current = "";
+      clearComposerDraftContent(composerDraftTarget);
+      composerRef.current?.resetCursorState();
+      setThreadError(activeThread.id, null);
+      toastManager.add(
+        stackedThreadToast({
+          type: "info",
+          title: "Message scheduled",
+          description: `Queued for ${scheduledMessage.scheduledFor}.`,
+        }),
+      );
+    },
+    [
+      activeThread,
+      clearComposerDraftContent,
+      composerDraftTarget,
+      composerRef,
+      interactionMode,
+      isServerThread,
+      runtimeMode,
+      setThreadError,
+    ],
+  );
+
   const onInterrupt = async () => {
     if (!activeThread) return;
     const result = await interruptThreadTurn({
@@ -4451,8 +4545,6 @@ function ChatViewContent(props: ChatViewProps) {
       } = sendCtx;
 
       const threadIdForSend = activeThread.id;
-      const messageIdForSend = newMessageId();
-      const messageCreatedAt = new Date().toISOString();
       const outgoingMessageText = formatOutgoingPrompt({
         provider: ctxSelectedProvider,
         model: ctxSelectedModel,
@@ -4460,6 +4552,24 @@ function ChatViewContent(props: ChatViewProps) {
         effort: ctxSelectedPromptEffort,
         text: trimmed,
       });
+      const startInput = createStartedThreadTextTurnInput({
+        threadId: threadIdForSend,
+        text: outgoingMessageText,
+        modelSelection: ctxSelectedModelSelection,
+        titleSeed: activeThread.title,
+        runtimeMode,
+        interactionMode: nextInteractionMode,
+        ...(nextInteractionMode === "default" && activeProposedPlan
+          ? {
+              sourceProposedPlan: {
+                threadId: activeThread.id,
+                planId: activeProposedPlan.id,
+              },
+            }
+          : {}),
+      });
+      const messageIdForSend = startInput.messageId;
+      const messageCreatedAt = startInput.createdAt;
 
       sendInFlightRef.current = true;
       beginLocalDispatch({ preparingWorktree: false });
@@ -4511,28 +4621,7 @@ function ChatViewContent(props: ChatViewProps) {
 
         const startResult = await startThreadTurn({
           environmentId,
-          input: {
-            threadId: threadIdForSend,
-            message: {
-              messageId: messageIdForSend,
-              role: "user",
-              text: outgoingMessageText,
-              attachments: [],
-            },
-            modelSelection: ctxSelectedModelSelection,
-            titleSeed: activeThread.title,
-            runtimeMode,
-            interactionMode: nextInteractionMode,
-            ...(nextInteractionMode === "default" && activeProposedPlan
-              ? {
-                  sourceProposedPlan: {
-                    threadId: activeThread.id,
-                    planId: activeProposedPlan.id,
-                  },
-                }
-              : {}),
-            createdAt: messageCreatedAt,
-          },
+          input: startInput.input,
         });
         failure = startResult._tag === "Failure" ? startResult : null;
       }
@@ -5185,11 +5274,14 @@ function ChatViewContent(props: ChatViewProps) {
                       keybindings={keybindings}
                       terminalOpen={Boolean(terminalUiState.terminalOpen)}
                       gitCwd={gitCwd}
+                      scheduledMessages={scheduledMessages}
                       promptRef={promptRef}
                       composerImagesRef={composerImagesRef}
                       composerTerminalContextsRef={composerTerminalContextsRef}
                       composerElementContextsRef={composerElementContextsRef}
                       onSend={onSend}
+                      onScheduleMessage={onScheduleMessage}
+                      onRemoveScheduledMessage={removeScheduledMessage}
                       onInterrupt={onInterrupt}
                       onImplementPlanInNewThread={onImplementPlanInNewThread}
                       onRespondToApproval={onRespondToApproval}
