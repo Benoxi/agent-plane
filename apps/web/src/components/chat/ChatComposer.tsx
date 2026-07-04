@@ -88,7 +88,9 @@ import { buildExpandedImagePreview, type ExpandedImagePreview } from "./Expanded
 import { basenameOfPath } from "../../pierre-icons";
 import { cn, randomUUID } from "~/lib/utils";
 import { Separator } from "../ui/separator";
+import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
+import { Card } from "../ui/card";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { toastManager } from "../ui/toast";
@@ -123,8 +125,10 @@ import {
 } from "../../lib/contextWindow";
 import { formatProviderSkillDisplayName } from "../../providerSkillPresentation";
 import { searchProviderSkills } from "../../providerSkillSearch";
+import { type ScheduledMessage } from "../../scheduledMessageStore";
 import { useMediaQuery } from "../../hooks/useMediaQuery";
 import type { ReviewCommentContext } from "../../reviewCommentContext";
+import { formatShortTimestamp } from "../../timestampFormat";
 
 const IMAGE_SIZE_LIMIT_LABEL = `${Math.round(PROVIDER_SEND_TURN_MAX_IMAGE_BYTES / (1024 * 1024))}MB`;
 
@@ -188,6 +192,35 @@ const terminalContextIdListsEqual = (
 
 function isInsideComposerFloatingLayer(element: Element): boolean {
   return element.closest(COMPOSER_FLOATING_LAYER_SELECTOR) !== null;
+}
+
+function getScheduledMessageBadgeVariant(
+  message: ScheduledMessage,
+  now = Date.now(),
+): "outline" | "info" | "warning" | "error" | "secondary" {
+  if (message.status === "failed") {
+    return "error";
+  }
+  if (message.status === "expired") {
+    return "warning";
+  }
+  if (message.status === "sending") {
+    return "info";
+  }
+  return Date.parse(message.scheduledFor) <= now ? "secondary" : "outline";
+}
+
+function getScheduledMessageLabel(message: ScheduledMessage, now = Date.now()): string {
+  if (message.status === "failed") {
+    return "Failed";
+  }
+  if (message.status === "expired") {
+    return "Expired";
+  }
+  if (message.status === "sending") {
+    return "Sending";
+  }
+  return Date.parse(message.scheduledFor) <= now ? "Due" : "Scheduled";
 }
 
 const ComposerFooterModeControls = memo(function ComposerFooterModeControls(props: {
@@ -346,10 +379,12 @@ const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryActions(
   isConnecting: boolean;
   isEnvironmentUnavailable: boolean;
   hasSendableContent: boolean;
+  scheduleDisabledReason: string | null;
   preserveComposerFocusOnPointerDown?: boolean;
   onPreviousPendingQuestion: () => void;
   onInterrupt: () => void;
   onImplementPlanInNewThread: () => void;
+  onScheduleMessage: (delaySeconds: number) => void;
 }) {
   return (
     <>
@@ -373,10 +408,12 @@ const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryActions(
         isEnvironmentUnavailable={props.isEnvironmentUnavailable}
         isPreparingWorktree={props.isPreparingWorktree}
         hasSendableContent={props.hasSendableContent}
+        scheduleDisabledReason={props.scheduleDisabledReason}
         preserveComposerFocusOnPointerDown={props.preserveComposerFocusOnPointerDown ?? false}
         onPreviousPendingQuestion={props.onPreviousPendingQuestion}
         onInterrupt={props.onInterrupt}
         onImplementPlanInNewThread={props.onImplementPlanInNewThread}
+        onSchedule={props.onScheduleMessage}
       />
     </>
   );
@@ -496,6 +533,7 @@ export interface ChatComposerProps {
   keybindings: ResolvedKeybindingsConfig;
   terminalOpen: boolean;
   gitCwd: string | null;
+  scheduledMessages: ReadonlyArray<ScheduledMessage>;
 
   // Refs the parent needs kept in sync
   promptRef: React.RefObject<string>;
@@ -506,6 +544,8 @@ export interface ChatComposerProps {
 
   // Callbacks
   onSend: (e?: { preventDefault: () => void }) => void;
+  onScheduleMessage: (delaySeconds: number) => void;
+  onRemoveScheduledMessage: (messageId: string) => void;
   onInterrupt: () => void;
   onImplementPlanInNewThread: () => void;
   onRespondToApproval: (
@@ -550,7 +590,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     activeThreadId,
     activeThreadEnvironmentId: _activeThreadEnvironmentId,
     activeThread,
-    isServerThread: _isServerThread,
+    isServerThread,
     isLocalDraftThread: _isLocalDraftThread,
     phase,
     isConnecting,
@@ -584,12 +624,15 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     keybindings,
     terminalOpen,
     gitCwd,
+    scheduledMessages,
     promptRef,
     composerRef,
     composerImagesRef,
     composerTerminalContextsRef,
     composerElementContextsRef,
     onSend,
+    onScheduleMessage,
+    onRemoveScheduledMessage,
     onInterrupt,
     onImplementPlanInNewThread,
     onRespondToApproval,
@@ -1134,6 +1177,36 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         : null,
     [activePendingIsResponding, activePendingProgress, activePendingResolvedAnswers],
   );
+  const scheduleDisabledReason = useMemo(() => {
+    if (!isServerThread || !activeThreadId) {
+      return "Start the thread before scheduling messages.";
+    }
+    if (prompt.trim().length === 0) {
+      return "Type a message to schedule it.";
+    }
+    if (composerImages.length > 0) {
+      return "Scheduling only supports text messages in this MVP.";
+    }
+    if (composerTerminalContexts.length > 0) {
+      return "Remove terminal context attachments to schedule this message.";
+    }
+    if (composerElementContexts.length > 0) {
+      return "Remove element selections to schedule this message.";
+    }
+    if (composerPreviewAnnotations.length > 0 || composerReviewComments.length > 0) {
+      return "Remove extra attached context to schedule this message.";
+    }
+    return null;
+  }, [
+    activeThreadId,
+    composerElementContexts.length,
+    composerImages.length,
+    composerPreviewAnnotations.length,
+    composerReviewComments.length,
+    composerTerminalContexts.length,
+    isServerThread,
+    prompt,
+  ]);
   const collapsedComposerPrimaryActionDisabled =
     phase === "running" || isSendBusy || isConnecting || !composerSendState.hasSendableContent;
   const collapsedComposerPrimaryActionLabel = "Send message";
@@ -2178,14 +2251,60 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                       isEnvironmentUnavailable={environmentUnavailable !== null}
                       isPreparingWorktree={false}
                       hasSendableContent={false}
+                      scheduleDisabledReason="Scheduling is unavailable while answering questions."
                       preserveComposerFocusOnPointerDown
                       onPreviousPendingQuestion={onPreviousActivePendingUserInputQuestion}
                       onInterrupt={handleInterruptPrimaryAction}
                       onImplementPlanInNewThread={handleImplementPlanInNewThreadPrimaryAction}
+                      onSchedule={() => undefined}
                     />
                   ) : null}
                 </div>
               </div>
+            </div>
+          ) : null}
+
+          {scheduledMessages.length > 0 ? (
+            <div className="space-y-2 px-3 pb-2 sm:px-4">
+              {scheduledMessages.map((message) => {
+                const now = Date.now();
+                return (
+                  <Card
+                    key={message.id}
+                    className="gap-2 rounded-xl border-border/55 bg-background/75 px-3 py-2"
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0 space-y-1">
+                        <div className="flex items-center gap-2">
+                          <Badge variant={getScheduledMessageBadgeVariant(message, now)} size="sm">
+                            {getScheduledMessageLabel(message, now)}
+                          </Badge>
+                          <span className="text-muted-foreground text-xs">
+                            {formatShortTimestamp(message.scheduledFor, settings.timestampFormat)}
+                          </span>
+                        </div>
+                        <div className="whitespace-pre-wrap break-words text-sm">
+                          {message.text}
+                        </div>
+                        {message.lastError ? (
+                          <div className="text-destructive text-xs">{message.lastError}</div>
+                        ) : null}
+                      </div>
+                      <Button
+                        type="button"
+                        size="icon-sm"
+                        variant="ghost"
+                        className="rounded-full"
+                        disabled={message.status === "sending"}
+                        onClick={() => onRemoveScheduledMessage(message.id)}
+                        aria-label="Remove scheduled message"
+                      >
+                        <XIcon className="size-3.5" />
+                      </Button>
+                    </div>
+                  </Card>
+                );
+              })}
             </div>
           ) : null}
 
@@ -2439,10 +2558,12 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     isEnvironmentUnavailable={environmentUnavailable !== null}
                     isPreparingWorktree={false}
                     hasSendableContent={false}
+                    scheduleDisabledReason="Scheduling is unavailable while answering questions."
                     preserveComposerFocusOnPointerDown
                     onPreviousPendingQuestion={onPreviousActivePendingUserInputQuestion}
                     onInterrupt={handleInterruptPrimaryAction}
                     onImplementPlanInNewThread={handleImplementPlanInNewThreadPrimaryAction}
+                    onSchedule={() => undefined}
                   />
                 </div>
               ) : null}
@@ -2550,10 +2671,12 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                   isEnvironmentUnavailable={environmentUnavailable !== null}
                   isPreparingWorktree={isPreparingWorktree}
                   hasSendableContent={composerSendState.hasSendableContent}
+                  scheduleDisabledReason={scheduleDisabledReason}
                   preserveComposerFocusOnPointerDown={isMobileViewport}
                   onPreviousPendingQuestion={onPreviousActivePendingUserInputQuestion}
                   onInterrupt={handleInterruptPrimaryAction}
                   onImplementPlanInNewThread={handleImplementPlanInNewThreadPrimaryAction}
+                  onScheduleMessage={onScheduleMessage}
                 />
               </div>
             </div>
