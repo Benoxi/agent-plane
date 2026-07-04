@@ -102,6 +102,7 @@ export function ScheduledMessageCoordinator() {
           input: createStartedThreadTextTurnInput({
             threadId: item.threadId,
             text: item.outgoingText,
+            attachments: item.attachments ?? [],
             modelSelection: item.modelSelection,
             titleSeed: item.titleSeed,
             runtimeMode: item.runtimeMode,

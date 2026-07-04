@@ -4246,7 +4246,7 @@ function ChatViewContent(props: ChatViewProps) {
   };
 
   const onScheduleMessage = useCallback(
-    (delaySeconds: number) => {
+    async (delaySeconds: number) => {
       if (!activeThread || !isServerThread) {
         return;
       }
@@ -4269,7 +4269,12 @@ function ChatViewContent(props: ChatViewProps) {
         selectedModelSelection: ctxSelectedModelSelection,
       } = sendCtx;
       const promptForSend = promptRef.current;
-      const { trimmedPrompt } = deriveComposerSendState({
+      const {
+        trimmedPrompt: trimmed,
+        sendableTerminalContexts: sendableComposerTerminalContexts,
+        expiredTerminalContextCount,
+        hasSendableContent,
+      } = deriveComposerSendState({
         prompt: promptForSend,
         imageCount: composerImages.length,
         terminalContexts: composerTerminalContexts,
@@ -4279,34 +4284,130 @@ function ChatViewContent(props: ChatViewProps) {
           composerReviewComments.length,
       });
 
-      if (
-        trimmedPrompt.length === 0 ||
-        composerImages.length > 0 ||
-        composerTerminalContexts.length > 0 ||
-        composerElementContexts.length > 0 ||
-        composerPreviewAnnotations.length > 0 ||
-        composerReviewComments.length > 0
-      ) {
+      const standaloneSlashCommand =
+        composerImages.length === 0 &&
+        sendableComposerTerminalContexts.length === 0 &&
+        composerElementContexts.length === 0 &&
+        composerPreviewAnnotations.length === 0 &&
+        composerReviewComments.length === 0
+          ? parseStandaloneComposerSlashCommand(trimmed)
+          : null;
+      if (standaloneSlashCommand) {
+        setThreadError(activeThread.id, "Run slash commands immediately before scheduling.");
         return;
       }
 
+      if (!hasSendableContent) {
+        if (expiredTerminalContextCount > 0) {
+          const toastCopy = buildExpiredTerminalContextToastCopy(
+            expiredTerminalContextCount,
+            "empty",
+          );
+          toastManager.add(
+            stackedThreadToast({
+              type: "warning",
+              title: toastCopy.title,
+              description: toastCopy.description,
+            }),
+          );
+        }
+        return;
+      }
+
+      const composerImagesSnapshot = [...composerImages];
+      const composerTerminalContextsSnapshot = [...sendableComposerTerminalContexts];
+      const composerElementContextsSnapshot = [...composerElementContexts];
+      const composerPreviewAnnotationsSnapshot = [...composerPreviewAnnotations];
+      const composerReviewCommentsSnapshot: ReviewCommentContext[] = [...composerReviewComments];
+      const messageTextWithContexts = appendElementContextsToPrompt(
+        appendTerminalContextsToPrompt(promptForSend, composerTerminalContextsSnapshot),
+        composerElementContextsSnapshot,
+      );
+      const messageTextWithPreviewAnnotations = composerPreviewAnnotationsSnapshot.reduce(
+        (text, annotation) => appendPreviewAnnotationPrompt(text, annotation),
+        messageTextWithContexts,
+      );
+      const messageTextForSend = appendReviewCommentsToPrompt(
+        messageTextWithPreviewAnnotations,
+        composerReviewCommentsSnapshot,
+      );
+      const attachmentsResult = await settlePromise(() =>
+        Promise.all(
+          composerImagesSnapshot.map(async (image) => ({
+            type: "image" as const,
+            name: image.name,
+            mimeType: image.mimeType,
+            sizeBytes: image.sizeBytes,
+            dataUrl: await readFileAsDataUrl(image.file),
+          })),
+        ),
+      );
+      if (attachmentsResult._tag === "Failure") {
+        const error = squashAtomCommandFailure(attachmentsResult);
+        setThreadError(
+          activeThread.id,
+          error instanceof Error ? error.message : "Failed to prepare scheduled attachments.",
+        );
+        return;
+      }
+
+      let firstComposerImageName: string | null = null;
+      if (composerImagesSnapshot.length > 0) {
+        const firstComposerImage = composerImagesSnapshot[0];
+        if (firstComposerImage) {
+          firstComposerImageName = firstComposerImage.name;
+        }
+      }
+      let titleSeed = trimmed;
+      if (!titleSeed) {
+        if (firstComposerImageName) {
+          titleSeed = `Image: ${firstComposerImageName}`;
+        } else if (composerTerminalContextsSnapshot.length > 0) {
+          titleSeed = formatTerminalContextLabel(composerTerminalContextsSnapshot[0]!);
+        } else if (composerElementContextsSnapshot.length > 0) {
+          titleSeed = formatElementContextLabel(composerElementContextsSnapshot[0]!);
+        } else {
+          titleSeed = "New thread";
+        }
+      }
       const scheduledMessage = scheduleThreadMessage({
         environmentId: activeThread.environmentId,
         threadId: activeThread.id,
-        text: trimmedPrompt,
+        text: trimmed,
         outgoingText: formatOutgoingPrompt({
           provider: ctxSelectedProvider,
           model: ctxSelectedModel,
           models: ctxSelectedProviderModels,
           effort: ctxSelectedPromptEffort,
-          text: trimmedPrompt,
+          text: messageTextForSend || IMAGE_ONLY_BOOTSTRAP_PROMPT,
         }),
-        titleSeed: activeThread.title,
+        attachments: attachmentsResult.value,
+        summary: {
+          imageCount: composerImagesSnapshot.length,
+          terminalContextCount: composerTerminalContextsSnapshot.length,
+          elementContextCount: composerElementContextsSnapshot.length,
+          previewAnnotationCount: composerPreviewAnnotationsSnapshot.length,
+          reviewCommentCount: composerReviewCommentsSnapshot.length,
+        },
+        titleSeed: truncate(titleSeed),
         modelSelection: ctxSelectedModelSelection,
         runtimeMode,
         interactionMode,
         delaySeconds,
       });
+      if (expiredTerminalContextCount > 0) {
+        const toastCopy = buildExpiredTerminalContextToastCopy(
+          expiredTerminalContextCount,
+          "omitted",
+        );
+        toastManager.add(
+          stackedThreadToast({
+            type: "warning",
+            title: toastCopy.title,
+            description: toastCopy.description,
+          }),
+        );
+      }
 
       promptRef.current = "";
       clearComposerDraftContent(composerDraftTarget);
@@ -4329,6 +4430,7 @@ function ChatViewContent(props: ChatViewProps) {
       isServerThread,
       runtimeMode,
       setThreadError,
+      toastManager,
     ],
   );
 

@@ -4,6 +4,7 @@ import type {
   ProviderInteractionMode,
   RuntimeMode,
   ThreadId,
+  UploadChatAttachment,
 } from "@t3tools/contracts";
 
 import { newMessageId } from "./lib/utils";
@@ -15,6 +16,7 @@ export function createStartedThreadTextTurnInput(input: {
   titleSeed: string;
   runtimeMode: RuntimeMode;
   interactionMode: ProviderInteractionMode;
+  attachments?: ReadonlyArray<UploadChatAttachment>;
   createdAt?: string;
   sourceProposedPlan?: {
     threadId: ThreadId;
@@ -33,7 +35,7 @@ export function createStartedThreadTextTurnInput(input: {
         messageId,
         role: "user" as const,
         text: input.text,
-        attachments: [],
+        attachments: [...(input.attachments ?? [])],
       },
       modelSelection: input.modelSelection,
       titleSeed: input.titleSeed,

@@ -233,6 +233,35 @@ function formatScheduledMessageTime(isoDate: string): string {
   return scheduledMessageTimeFormatter.format(new Date(isoDate));
 }
 
+function formatCount(count: number | undefined, singular: string, plural = `${singular}s`) {
+  if (!count) {
+    return null;
+  }
+  return `${count} ${count === 1 ? singular : plural}`;
+}
+
+function getScheduledMessagePreview(message: ScheduledMessage): string {
+  const text = message.text.trim();
+  if (text.length > 0) {
+    return text;
+  }
+  if ((message.summary?.imageCount ?? 0) > 0) {
+    return "Image message";
+  }
+  return "Context message";
+}
+
+function getScheduledMessageAttachmentSummary(message: ScheduledMessage): string | null {
+  const summaryParts = [
+    formatCount(message.summary?.imageCount ?? message.attachments?.length, "image"),
+    formatCount(message.summary?.terminalContextCount, "terminal context"),
+    formatCount(message.summary?.elementContextCount, "element selection"),
+    formatCount(message.summary?.previewAnnotationCount, "preview annotation"),
+    formatCount(message.summary?.reviewCommentCount, "review comment"),
+  ].filter((part): part is string => Boolean(part));
+  return summaryParts.length > 0 ? summaryParts.join(" · ") : null;
+}
+
 const ComposerFooterModeControls = memo(function ComposerFooterModeControls(props: {
   showInteractionModeToggle: boolean;
   interactionMode: ProviderInteractionMode;
@@ -394,7 +423,7 @@ const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryActions(
   onPreviousPendingQuestion: () => void;
   onInterrupt: () => void;
   onImplementPlanInNewThread: () => void;
-  onScheduleMessage: (delaySeconds: number) => void;
+  onScheduleMessage: (delaySeconds: number) => void | Promise<void>;
 }) {
   return (
     <>
@@ -554,7 +583,7 @@ export interface ChatComposerProps {
 
   // Callbacks
   onSend: (e?: { preventDefault: () => void }) => void;
-  onScheduleMessage: (delaySeconds: number) => void;
+  onScheduleMessage: (delaySeconds: number) => void | Promise<void>;
   onRemoveScheduledMessage: (messageId: string) => void;
   onInterrupt: () => void;
   onImplementPlanInNewThread: () => void;
@@ -1191,32 +1220,11 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     if (!isServerThread || !activeThreadId) {
       return "Start the thread before scheduling messages.";
     }
-    if (prompt.trim().length === 0) {
-      return "Type a message to schedule it.";
-    }
-    if (composerImages.length > 0) {
-      return "Scheduling only supports text messages in this MVP.";
-    }
-    if (composerTerminalContexts.length > 0) {
-      return "Remove terminal context attachments to schedule this message.";
-    }
-    if (composerElementContexts.length > 0) {
-      return "Remove element selections to schedule this message.";
-    }
-    if (composerPreviewAnnotations.length > 0 || composerReviewComments.length > 0) {
-      return "Remove extra attached context to schedule this message.";
+    if (!composerSendState.hasSendableContent) {
+      return "Add text, images, or context to schedule it.";
     }
     return null;
-  }, [
-    activeThreadId,
-    composerElementContexts.length,
-    composerImages.length,
-    composerPreviewAnnotations.length,
-    composerReviewComments.length,
-    composerTerminalContexts.length,
-    isServerThread,
-    prompt,
-  ]);
+  }, [activeThreadId, composerSendState.hasSendableContent, isServerThread]);
   const collapsedComposerPrimaryActionDisabled =
     phase === "running" || isSendBusy || isConnecting || !composerSendState.hasSendableContent;
   const collapsedComposerPrimaryActionLabel = "Send message";
@@ -2294,8 +2302,13 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                           </span>
                         </div>
                         <div className="whitespace-pre-wrap break-words text-sm">
-                          {message.text}
+                          {getScheduledMessagePreview(message)}
                         </div>
+                        {getScheduledMessageAttachmentSummary(message) ? (
+                          <div className="text-muted-foreground text-xs">
+                            {getScheduledMessageAttachmentSummary(message)}
+                          </div>
+                        ) : null}
                         {message.lastError ? (
                           <div className="text-destructive text-xs">{message.lastError}</div>
                         ) : null}

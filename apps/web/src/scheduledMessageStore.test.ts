@@ -161,4 +161,77 @@ describe("scheduledMessageStore", () => {
     store.removeScheduledMessagesForThread({ environmentId, threadId });
     expect(store.readScheduledMessages()).toEqual([]);
   });
+
+  it("persists rich payload snapshots", async () => {
+    const storage = createLocalStorageStub();
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-07-04T12:00:00.000Z"));
+    const store = await loadStoreWithStorage(storage);
+    const environmentId = EnvironmentId.make("environment-local");
+    const threadId = ThreadId.make("thread-1");
+
+    const scheduled = store.scheduleThreadMessage({
+      environmentId,
+      threadId,
+      text: "look at this",
+      outgoingText: "look at this\n\n<terminal_context>...</terminal_context>",
+      attachments: [
+        {
+          type: "image",
+          name: "screenshot.png",
+          mimeType: "image/png",
+          sizeBytes: 123,
+          dataUrl: "data:image/png;base64,abc",
+        },
+      ],
+      summary: {
+        imageCount: 1,
+        terminalContextCount: 1,
+        elementContextCount: 1,
+        previewAnnotationCount: 1,
+        reviewCommentCount: 1,
+      },
+      titleSeed: "look at this",
+      modelSelection: {
+        instanceId: ProviderInstanceId.make("codex"),
+        model: "gpt-5.4",
+      },
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      delaySeconds: 30,
+    });
+
+    expect(store.readScheduledMessages()[0]).toEqual(
+      expect.objectContaining({
+        id: scheduled.id,
+        attachments: [
+          expect.objectContaining({
+            name: "screenshot.png",
+            dataUrl: "data:image/png;base64,abc",
+          }),
+        ],
+        summary: expect.objectContaining({
+          imageCount: 1,
+          terminalContextCount: 1,
+          elementContextCount: 1,
+          previewAnnotationCount: 1,
+          reviewCommentCount: 1,
+        }),
+      }),
+    );
+
+    const reloadedStore = await import("./scheduledMessageStore");
+    expect(reloadedStore.readScheduledMessages()[0]).toEqual(
+      expect.objectContaining({
+        attachments: [
+          expect.objectContaining({
+            mimeType: "image/png",
+          }),
+        ],
+        summary: expect.objectContaining({
+          imageCount: 1,
+        }),
+      }),
+    );
+  });
 });
