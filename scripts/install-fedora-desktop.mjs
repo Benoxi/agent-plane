@@ -19,7 +19,7 @@ const defaults = {
     "applications",
     "t3code-stable.desktop",
   ),
-  stateDir: NodePath.join(NodeOS.homedir(), ".t3", "stable"),
+  stateDir: NodePath.join(NodeOS.homedir(), ".t3"),
 };
 
 function expandHome(inputPath) {
@@ -88,7 +88,7 @@ function printHelp() {
       "  --install-dir <dir>    Install root for the AppImage payload",
       "  --launcher-path <p>    Shell launcher path to create",
       "  --desktop-file <p>     Desktop entry path to create",
-      "  --state-dir <dir>      Stable T3CODE_HOME to use when launching",
+      "  --state-dir <dir>      T3CODE_HOME to use when launching",
     ].join("\n"),
   );
   NodeProcess.stdout.write("\n");
@@ -167,7 +167,7 @@ async function main() {
       `Installed AppImage: ${sourceAppImage}`,
       `Launcher: ${options.launcherPath}`,
       `Desktop entry: ${options.desktopFilePath}`,
-      `Stable state dir: ${options.stateDir}`,
+      `T3CODE_HOME: ${options.stateDir}`,
     ].join("\n") + "\n",
   );
 }

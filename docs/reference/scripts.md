@@ -15,7 +15,7 @@
 - `pnpm run dist:desktop:dmg:x64` — Builds an Intel macOS `.dmg`.
 - `pnpm run dist:desktop:linux` — Builds a Linux AppImage into `./release`.
 - `pnpm run dist:desktop:fedora` — Builds a Fedora-focused Linux AppImage into `./release-fedora`.
-- `pnpm run install:desktop:fedora` — Installs the latest Fedora AppImage into `~/.local/share/t3code/stable` and creates a stable launcher that uses `~/.t3/stable`.
+- `pnpm run install:desktop:fedora` — Installs the latest Fedora AppImage into `~/.local/share/t3code/stable` and creates a launcher that shares the default `~/.t3` state with the installed desktop app.
 - `pnpm run dist:desktop:win` — Builds a Windows NSIS installer into `./release`.
 
 ## Desktop `.dmg` packaging notes
