@@ -97,7 +97,7 @@ function printHelp() {
 async function findAppImage(sourceDir) {
   await NodeFSP.access(sourceDir).catch(() => {
     throw new Error(
-      `Source directory not found: ${sourceDir}. Build with \`bun run dist:desktop:fedora\` first.`,
+      `Source directory not found: ${sourceDir}. Build with \`pnpm run dist:desktop:fedora\` first.`,
     );
   });
   const entries = await NodeFSP.readdir(sourceDir, { withFileTypes: true });
@@ -107,7 +107,7 @@ async function findAppImage(sourceDir) {
 
   if (appImages.length === 0) {
     throw new Error(
-      `No AppImage found in ${sourceDir}. Build with \`bun run dist:desktop:fedora\` first.`,
+      `No AppImage found in ${sourceDir}. Build with \`pnpm run dist:desktop:fedora\` first.`,
     );
   }
 
