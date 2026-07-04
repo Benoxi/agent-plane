@@ -128,7 +128,6 @@ import { searchProviderSkills } from "../../providerSkillSearch";
 import { type ScheduledMessage } from "../../scheduledMessageStore";
 import { useMediaQuery } from "../../hooks/useMediaQuery";
 import type { ReviewCommentContext } from "../../reviewCommentContext";
-import { formatShortTimestamp } from "../../timestampFormat";
 
 const IMAGE_SIZE_LIMIT_LABEL = `${Math.round(PROVIDER_SEND_TURN_MAX_IMAGE_BYTES / (1024 * 1024))}MB`;
 
@@ -221,6 +220,17 @@ function getScheduledMessageLabel(message: ScheduledMessage, now = Date.now()): 
     return "Sending";
   }
   return Date.parse(message.scheduledFor) <= now ? "Due" : "Scheduled";
+}
+
+const scheduledMessageTimeFormatter = new Intl.DateTimeFormat("en-GB", {
+  hour: "2-digit",
+  minute: "2-digit",
+  second: "2-digit",
+  hour12: false,
+});
+
+function formatScheduledMessageTime(isoDate: string): string {
+  return scheduledMessageTimeFormatter.format(new Date(isoDate));
 }
 
 const ComposerFooterModeControls = memo(function ComposerFooterModeControls(props: {
@@ -2280,7 +2290,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                             {getScheduledMessageLabel(message, now)}
                           </Badge>
                           <span className="text-muted-foreground text-xs">
-                            {formatShortTimestamp(message.scheduledFor, settings.timestampFormat)}
+                            {formatScheduledMessageTime(message.scheduledFor)}
                           </span>
                         </div>
                         <div className="whitespace-pre-wrap break-words text-sm">
