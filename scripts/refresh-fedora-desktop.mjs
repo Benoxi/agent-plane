@@ -30,6 +30,8 @@ function parseArgs(argv) {
     const next = argv[index + 1];
 
     switch (arg) {
+      case "--":
+        break;
       case "--launcher-path":
         if (!next) throw new Error("--launcher-path requires a value");
         result.launcherPath = NodePath.resolve(expandHome(next));
