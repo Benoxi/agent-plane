@@ -68,9 +68,14 @@ import {
   ProjectListEntriesError,
   ProjectListEntriesInput,
   ProjectListEntriesResult,
+  ProjectListClaudeSessionsInput,
+  ProjectListClaudeSessionsResult,
+  ProjectClaudeSessionImportError,
   ProjectReadFileError,
   ProjectReadFileInput,
   ProjectReadFileResult,
+  ProjectImportClaudeSessionInput,
+  ProjectImportClaudeSessionResult,
   ProjectSearchEntriesError,
   ProjectSearchEntriesInput,
   ProjectSearchEntriesResult,
@@ -150,6 +155,8 @@ export const WS_METHODS = {
   projectsAdd: "projects.add",
   projectsRemove: "projects.remove",
   projectsListEntries: "projects.listEntries",
+  projectsListClaudeSessions: "projects.listClaudeSessions",
+  projectsImportClaudeSession: "projects.importClaudeSession",
   projectsReadFile: "projects.readFile",
   projectsSearchEntries: "projects.searchEntries",
   projectsWriteFile: "projects.writeFile",
@@ -364,6 +371,18 @@ export const WsProjectsListEntriesRpc = Rpc.make(WS_METHODS.projectsListEntries,
   payload: ProjectListEntriesInput,
   success: ProjectListEntriesResult,
   error: Schema.Union([ProjectListEntriesError, EnvironmentAuthorizationError]),
+});
+
+export const WsProjectsListClaudeSessionsRpc = Rpc.make(WS_METHODS.projectsListClaudeSessions, {
+  payload: ProjectListClaudeSessionsInput,
+  success: ProjectListClaudeSessionsResult,
+  error: Schema.Union([ProjectClaudeSessionImportError, EnvironmentAuthorizationError]),
+});
+
+export const WsProjectsImportClaudeSessionRpc = Rpc.make(WS_METHODS.projectsImportClaudeSession, {
+  payload: ProjectImportClaudeSessionInput,
+  success: ProjectImportClaudeSessionResult,
+  error: Schema.Union([ProjectClaudeSessionImportError, EnvironmentAuthorizationError]),
 });
 
 export const WsProjectsReadFileRpc = Rpc.make(WS_METHODS.projectsReadFile, {
@@ -700,6 +719,8 @@ export const WsRpcGroup = RpcGroup.make(
   WsSourceControlCloneRepositoryRpc,
   WsSourceControlPublishRepositoryRpc,
   WsProjectsListEntriesRpc,
+  WsProjectsListClaudeSessionsRpc,
+  WsProjectsImportClaudeSessionRpc,
   WsProjectsReadFileRpc,
   WsProjectsSearchEntriesRpc,
   WsProjectsWriteFileRpc,
