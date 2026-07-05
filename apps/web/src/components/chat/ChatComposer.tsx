@@ -2289,6 +2289,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                           <Badge variant={getScheduledMessageBadgeVariant(message, now)} size="sm">
                             {getScheduledMessageLabel(message, now)}
                           </Badge>
+                          {message.source === "rate-limit-auto-continue" ? (
+                            <span className="text-muted-foreground text-xs">Auto continue</span>
+                          ) : null}
                           <span className="text-muted-foreground text-xs">
                             {formatScheduledMessageTime(message.scheduledFor)}
                           </span>
