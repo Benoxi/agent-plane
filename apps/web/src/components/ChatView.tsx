@@ -19,6 +19,7 @@ import {
   ProviderInteractionMode,
   ProviderDriverKind,
   RuntimeMode,
+  ScheduledMessageId,
   TerminalOpenInput,
 } from "@t3tools/contracts";
 import {
@@ -148,7 +149,7 @@ import {
   nextProjectScriptId,
   projectScriptIdFromCommand,
 } from "~/projectScripts";
-import { newDraftId, newMessageId, newThreadId } from "~/lib/utils";
+import { newDraftId, newMessageId, newThreadId, randomUUID } from "~/lib/utils";
 import { getProviderModelCapabilities, resolveSelectableProvider } from "../providerModels";
 import { useEnvironmentSettings } from "../hooks/useSettings";
 import { resolveAppModelSelectionForInstance } from "../modelSelection";
@@ -250,10 +251,10 @@ import {
 } from "../versionSkew";
 import { useAssetUrls } from "../assets/assetUrls";
 import {
-  removeScheduledMessage,
-  scheduleThreadMessage,
+  useCreateScheduledMessage,
+  useDeleteScheduledMessage,
   useScheduledMessagesForThread,
-} from "../scheduledMessageStore";
+} from "../state/scheduledMessages";
 import { createStartedThreadTextTurnInput } from "../threadSendExecution";
 
 const IMAGE_ONLY_BOOTSTRAP_PROMPT =
@@ -1018,6 +1019,8 @@ function ChatViewContent(props: ChatViewProps) {
     reportFailure: false,
   });
   const startThreadTurn = useAtomCommand(threadEnvironment.startTurn, { reportFailure: false });
+  const createScheduledMessage = useCreateScheduledMessage();
+  const deleteScheduledMessage = useDeleteScheduledMessage();
   const interruptThreadTurn = useAtomCommand(threadEnvironment.interruptTurn, {
     reportFailure: false,
   });
@@ -4246,7 +4249,7 @@ function ChatViewContent(props: ChatViewProps) {
   };
 
   const onScheduleMessage = useCallback(
-    (delaySeconds: number) => {
+    async (delaySeconds: number) => {
       if (!activeThread || !isServerThread) {
         return;
       }
@@ -4290,23 +4293,44 @@ function ChatViewContent(props: ChatViewProps) {
         return;
       }
 
-      const scheduledMessage = scheduleThreadMessage({
-        environmentId: activeThread.environmentId,
-        threadId: activeThread.id,
+      const outgoingText = formatOutgoingPrompt({
+        provider: ctxSelectedProvider,
+        model: ctxSelectedModel,
+        models: ctxSelectedProviderModels,
+        effort: ctxSelectedPromptEffort,
         text: trimmedPrompt,
-        outgoingText: formatOutgoingPrompt({
-          provider: ctxSelectedProvider,
-          model: ctxSelectedModel,
-          models: ctxSelectedProviderModels,
-          effort: ctxSelectedPromptEffort,
-          text: trimmedPrompt,
-        }),
-        titleSeed: activeThread.title,
-        modelSelection: ctxSelectedModelSelection,
-        runtimeMode,
-        interactionMode,
-        delaySeconds,
       });
+      const createResult = await createScheduledMessage({
+        environmentId: activeThread.environmentId,
+        input: {
+          threadId: activeThread.id,
+          text: trimmedPrompt,
+          outgoingText,
+          titleSeed: activeThread.title,
+          modelSelection: ctxSelectedModelSelection,
+          runtimeMode,
+          interactionMode,
+          delaySeconds,
+          source: "manual",
+          clientRequestId: `manual:${activeThread.id}:${randomUUID()}`,
+        },
+      });
+
+      if (createResult._tag === "Failure") {
+        const error = squashAtomCommandFailure(createResult);
+        const message = error instanceof Error ? error.message : "Failed to schedule message.";
+        setThreadError(activeThread.id, message);
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: "Schedule failed",
+            description: message,
+          }),
+        );
+        return;
+      }
+
+      const scheduledMessage = createResult.value;
 
       promptRef.current = "";
       clearComposerDraftContent(composerDraftTarget);
@@ -4325,6 +4349,7 @@ function ChatViewContent(props: ChatViewProps) {
       clearComposerDraftContent,
       composerDraftTarget,
       composerRef,
+      createScheduledMessage,
       interactionMode,
       isServerThread,
       runtimeMode,
@@ -5281,7 +5306,13 @@ function ChatViewContent(props: ChatViewProps) {
                       composerElementContextsRef={composerElementContextsRef}
                       onSend={onSend}
                       onScheduleMessage={onScheduleMessage}
-                      onRemoveScheduledMessage={removeScheduledMessage}
+                      onRemoveScheduledMessage={(messageId) => {
+                        if (!activeThread) return;
+                        void deleteScheduledMessage({
+                          environmentId: activeThread.environmentId,
+                          input: { messageId: ScheduledMessageId.make(messageId) },
+                        });
+                      }}
                       onInterrupt={onInterrupt}
                       onImplementPlanInNewThread={onImplementPlanInNewThread}
                       onRespondToApproval={onRespondToApproval}

@@ -18,7 +18,6 @@ import { RelayClientInstallDialog } from "../components/cloud/RelayClientInstall
 import { SshPasswordPromptDialog } from "../components/desktop/SshPasswordPromptDialog";
 import { ProviderUpdateLaunchNotification } from "../components/ProviderUpdateLaunchNotification";
 import { RateLimitAutoContinueCoordinator } from "../components/RateLimitAutoContinueCoordinator";
-import { ScheduledMessageCoordinator } from "../components/ScheduledMessageCoordinator";
 import { SlowRpcRequestToastCoordinator } from "../components/SlowRpcRequestToastCoordinator";
 import { Button } from "../components/ui/button";
 import {
@@ -43,6 +42,7 @@ import { shellEnvironment } from "../state/shell";
 import { useAtomValue } from "@effect/atom-react";
 import { useAtomCommand } from "../state/use-atom-command";
 import { useEnvironments, usePrimaryEnvironment } from "../state/environments";
+import { ScheduledMessageLocalMigration } from "../scheduledMessageLocalMigration";
 import {
   primaryServerConfigAtom,
   primaryServerConfigEventAtom,
@@ -133,7 +133,7 @@ function RootRouteView() {
         <SshPasswordPromptDialog />
         <SlowRpcRequestToastCoordinator />
         <RateLimitAutoContinueCoordinator />
-        <ScheduledMessageCoordinator />
+        {primaryEnvironmentAuthenticated ? <ScheduledMessageLocalMigration /> : null}
         <HostedStaticEnvironmentBootstrap />
         {primaryEnvironmentAuthenticated ? <EventRouter /> : null}
         {primaryEnvironmentAuthenticated ? <ProviderUpdateLaunchNotification /> : null}

@@ -1,6 +1,10 @@
-import { describe, expect, it } from "vite-plus/test";
+import type React from "react";
+import { describe, expect, it, vi } from "vite-plus/test";
 
-import { formatPendingPrimaryActionLabel } from "./ComposerPrimaryActions";
+import {
+  formatPendingPrimaryActionLabel,
+  getComposerPointerFocusProps,
+} from "./ComposerPrimaryActions";
 
 describe("formatPendingPrimaryActionLabel", () => {
   it("returns 'Submitting...' while responding", () => {
@@ -89,5 +93,28 @@ describe("formatPendingPrimaryActionLabel", () => {
         questionIndex: 5,
       }),
     ).toBe("Submit answers");
+  });
+});
+
+describe("getComposerPointerFocusProps", () => {
+  it("omits focus-preservation handlers when disabled", () => {
+    expect(getComposerPointerFocusProps(false, "plain-action")).toBeUndefined();
+    expect(getComposerPointerFocusProps(false, "floating-trigger")).toBeUndefined();
+  });
+
+  it("preserves focus for plain composer actions", () => {
+    const preventDefault = vi.fn();
+    const props = getComposerPointerFocusProps(true, "plain-action");
+
+    expect(props).toBeDefined();
+    props?.onPointerDown({
+      preventDefault,
+    } as unknown as React.PointerEvent<HTMLElement>);
+
+    expect(preventDefault).toHaveBeenCalledOnce();
+  });
+
+  it("does not suppress pointer events for floating layer triggers", () => {
+    expect(getComposerPointerFocusProps(true, "floating-trigger")).toBeUndefined();
   });
 });

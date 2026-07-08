@@ -7,6 +7,8 @@ import * as Stream from "effect/Stream";
 
 import { ProviderService } from "../../provider/Services/ProviderService.ts";
 import * as TerminalManager from "../../terminal/Manager.ts";
+import { ScheduledMessageRepository } from "../../persistence/Services/ScheduledMessages.ts";
+import { ScheduledMessageBus } from "../../scheduledMessages/ScheduledMessageBus.ts";
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
 import {
   ThreadDeletionReactor,
@@ -40,6 +42,8 @@ const make = Effect.gen(function* () {
   const orchestrationEngine = yield* OrchestrationEngineService;
   const providerService = yield* ProviderService;
   const terminalManager = yield* TerminalManager.TerminalManager;
+  const scheduledMessages = yield* ScheduledMessageRepository;
+  const scheduledMessageBus = yield* ScheduledMessageBus;
 
   const stopProviderSession = (threadId: ThreadDeletedEvent["payload"]["threadId"]) =>
     logCleanupCauseUnlessInterrupted({
@@ -59,8 +63,27 @@ const make = Effect.gen(function* () {
     event: ThreadDeletedEvent,
   ) {
     const { threadId } = event.payload;
+    const existingScheduledMessages = yield* scheduledMessages.list({ threadId }).pipe(
+      Effect.catchCause((cause) =>
+        logCleanupCauseUnlessInterrupted({
+          effect: Effect.failCause(cause),
+          message: "thread deletion cleanup skipped scheduled message lookup",
+          threadId,
+        }).pipe(Effect.as([])),
+      ),
+    );
     yield* stopProviderSession(threadId);
     yield* closeThreadTerminals(threadId);
+    yield* logCleanupCauseUnlessInterrupted({
+      effect: scheduledMessages.removeByThreadId({ threadId }),
+      message: "thread deletion cleanup skipped scheduled message removal",
+      threadId,
+    });
+    yield* Effect.forEach(
+      existingScheduledMessages,
+      (item) => scheduledMessageBus.publish({ type: "removed", messageId: item.id }),
+      { discard: true },
+    );
   });
 
   const processThreadDeletedSafely = (event: ThreadDeletedEvent) =>

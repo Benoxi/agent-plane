@@ -50,6 +50,9 @@ import {
   AssetWorkspaceContextNotFoundError,
   AssetWorkspaceContextResolutionError,
   EnvironmentAuthorizationError,
+  type ScheduledMessage,
+  ScheduledMessageOperationError,
+  ScheduledMessageId,
   ThreadId,
   type TerminalAttachStreamEvent,
   type TerminalError,
@@ -115,6 +118,8 @@ import * as PairingGrantStore from "./auth/PairingGrantStore.ts";
 import * as SessionStore from "./auth/SessionStore.ts";
 import { failEnvironmentAuthInvalid, failEnvironmentInternal } from "./auth/http.ts";
 import * as RelayClient from "@t3tools/shared/relayClient";
+import { ScheduledMessageRepository } from "./persistence/Services/ScheduledMessages.ts";
+import { ScheduledMessageBus } from "./scheduledMessages/ScheduledMessageBus.ts";
 const isOrchestrationDispatchCommandError = Schema.is(OrchestrationDispatchCommandError);
 
 const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
@@ -302,6 +307,10 @@ const RPC_REQUIRED_SCOPE = new Map<string, AuthEnvironmentScope>([
   [WS_METHODS.sourceControlLookupRepository, AuthOrchestrationReadScope],
   [WS_METHODS.sourceControlCloneRepository, AuthOrchestrationOperateScope],
   [WS_METHODS.sourceControlPublishRepository, AuthOrchestrationOperateScope],
+  [WS_METHODS.scheduledMessagesList, AuthOrchestrationReadScope],
+  [WS_METHODS.scheduledMessagesCreate, AuthOrchestrationOperateScope],
+  [WS_METHODS.scheduledMessagesDelete, AuthOrchestrationOperateScope],
+  [WS_METHODS.scheduledMessagesSubscribe, AuthOrchestrationReadScope],
   [WS_METHODS.projectsListEntries, AuthOrchestrationReadScope],
   [WS_METHODS.projectsListClaudeSessions, AuthOrchestrationReadScope],
   [WS_METHODS.projectsImportClaudeSession, AuthOrchestrationOperateScope],
@@ -446,6 +455,8 @@ const makeWsRpcLayer = (
       const processDiagnostics = yield* ProcessDiagnostics.ProcessDiagnostics;
       const processResourceMonitor = yield* ProcessResourceMonitor.ProcessResourceMonitor;
       const relayClient = yield* RelayClient.RelayClient;
+      const scheduledMessageRepository = yield* ScheduledMessageRepository;
+      const scheduledMessageBus = yield* ScheduledMessageBus;
       const authorizationError = (requiredScope: AuthEnvironmentScope) =>
         new EnvironmentAuthorizationError({
           message: `The authenticated token is missing required scope: ${requiredScope}.`,
@@ -953,6 +964,16 @@ const makeWsRpcLayer = (
           .refreshStatus(cwd)
           .pipe(Effect.ignoreCause({ log: true }), Effect.forkDetach, Effect.asVoid);
 
+      const publishScheduledMessageUpsert = (item: ScheduledMessage) =>
+        scheduledMessageBus.publish({ type: "upserted", item }).pipe(Effect.ignore);
+      const scheduledMessageError = (message: string, cause?: unknown) =>
+        new ScheduledMessageOperationError({
+          message,
+          ...(cause === undefined ? {} : { cause }),
+        });
+      const toScheduledMessageError = (message: string) => (cause: unknown) =>
+        scheduledMessageError(message, cause);
+
       return WsRpcGroup.of({
         [ORCHESTRATION_WS_METHODS.dispatchCommand]: (command) =>
           observeRpcEffect(
@@ -1333,6 +1354,119 @@ const makeWsRpcLayer = (
             {
               "rpc.aggregate": "source-control",
             },
+          ),
+        [WS_METHODS.scheduledMessagesList]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.scheduledMessagesList,
+            scheduledMessageRepository
+              .list(input.threadId === undefined ? {} : { threadId: input.threadId })
+              .pipe(
+                Effect.map((items) => ({ items: Array.from(items) })),
+                Effect.mapError(toScheduledMessageError("Failed to list scheduled messages.")),
+              ),
+            { "rpc.aggregate": "scheduled-messages" },
+          ),
+        [WS_METHODS.scheduledMessagesCreate]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.scheduledMessagesCreate,
+            Effect.gen(function* () {
+              const thread = yield* projectionSnapshotQuery
+                .getThreadShellById(input.threadId)
+                .pipe(Effect.mapError(toScheduledMessageError("Failed to validate thread.")));
+              if (Option.isNone(thread)) {
+                return yield* scheduledMessageError(`Thread ${input.threadId} was not found.`);
+              }
+              const now = yield* DateTime.now;
+              const createdAt = DateTime.formatIso(now);
+              const scheduledFor = DateTime.formatIso(
+                DateTime.add(now, { seconds: Math.max(1, input.delaySeconds) }),
+              );
+              const id = yield* crypto.randomUUIDv4.pipe(
+                Effect.map(ScheduledMessageId.make),
+                Effect.mapError(toScheduledMessageError("Failed to create scheduled message id.")),
+              );
+              const item = yield* scheduledMessageRepository
+                .create({
+                  id,
+                  threadId: input.threadId,
+                  text: input.text,
+                  outgoingText: input.outgoingText,
+                  titleSeed: input.titleSeed,
+                  modelSelection: input.modelSelection,
+                  runtimeMode: input.runtimeMode,
+                  interactionMode: input.interactionMode,
+                  ...(input.attachments === undefined ? {} : { attachments: input.attachments }),
+                  ...(input.summary === undefined ? {} : { summary: input.summary }),
+                  createdAt,
+                  scheduledFor,
+                  status: "pending",
+                  ...(input.source === undefined ? {} : { source: input.source }),
+                  ...(input.sourceActivityId === undefined
+                    ? {}
+                    : { sourceActivityId: input.sourceActivityId }),
+                  ...(input.clientRequestId === undefined
+                    ? {}
+                    : { clientRequestId: input.clientRequestId }),
+                })
+                .pipe(
+                  Effect.mapError(toScheduledMessageError("Failed to create scheduled message.")),
+                );
+              yield* publishScheduledMessageUpsert(item);
+              yield* scheduledMessageBus.wake;
+              return item;
+            }),
+            { "rpc.aggregate": "scheduled-messages" },
+          ),
+        [WS_METHODS.scheduledMessagesDelete]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.scheduledMessagesDelete,
+            Effect.gen(function* () {
+              const existing = yield* scheduledMessageRepository
+                .getById({ id: input.messageId })
+                .pipe(
+                  Effect.mapError(toScheduledMessageError("Failed to load scheduled message.")),
+                );
+              if (Option.isNone(existing) || existing.value.status === "sending") {
+                return;
+              }
+              yield* scheduledMessageRepository
+                .remove({ id: input.messageId })
+                .pipe(
+                  Effect.mapError(toScheduledMessageError("Failed to delete scheduled message.")),
+                );
+              yield* scheduledMessageBus.publish({ type: "removed", messageId: input.messageId });
+              yield* scheduledMessageBus.wake;
+            }),
+            { "rpc.aggregate": "scheduled-messages" },
+          ),
+        [WS_METHODS.scheduledMessagesSubscribe]: (input) =>
+          observeRpcStreamEffect(
+            WS_METHODS.scheduledMessagesSubscribe,
+            Effect.gen(function* () {
+              const items = yield* scheduledMessageRepository
+                .list(input.threadId === undefined ? {} : { threadId: input.threadId })
+                .pipe(
+                  Effect.mapError(toScheduledMessageError("Failed to load scheduled messages.")),
+                );
+              const live = scheduledMessageBus.stream.pipe(
+                Stream.filter((event) => {
+                  if (input.threadId === undefined) return true;
+                  switch (event.type) {
+                    case "snapshot":
+                      return true;
+                    case "upserted":
+                      return event.item.threadId === input.threadId;
+                    case "removed":
+                      return true;
+                  }
+                }),
+              );
+              return Stream.concat(
+                Stream.make({ type: "snapshot" as const, items: Array.from(items) }),
+                live,
+              );
+            }),
+            { "rpc.aggregate": "scheduled-messages" },
           ),
         [WS_METHODS.projectsSearchEntries]: (input) =>
           observeRpcEffect(

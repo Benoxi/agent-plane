@@ -58,6 +58,15 @@ import {
   OrchestrationReplayEventsInput,
   OrchestrationRpcSchemas,
 } from "./orchestration.ts";
+import {
+  ScheduledMessage,
+  ScheduledMessageCreateInput,
+  ScheduledMessageDeleteInput,
+  ScheduledMessageOperationError,
+  ScheduledMessagesListInput,
+  ScheduledMessagesListResult,
+  ScheduledMessagesStreamEvent,
+} from "./scheduledMessages.ts";
 import { ProviderInstanceId } from "./providerInstance.ts";
 import {
   RelayClientInstallFailedError,
@@ -230,6 +239,12 @@ export const WS_METHODS = {
   sourceControlCloneRepository: "sourceControl.cloneRepository",
   sourceControlPublishRepository: "sourceControl.publishRepository",
 
+  // Scheduled messages
+  scheduledMessagesList: "scheduledMessages.list",
+  scheduledMessagesCreate: "scheduledMessages.create",
+  scheduledMessagesDelete: "scheduledMessages.delete",
+  scheduledMessagesSubscribe: "scheduledMessages.subscribe",
+
   // Streaming subscriptions
   subscribeVcsStatus: "subscribeVcsStatus",
   subscribeTerminalEvents: "subscribeTerminalEvents",
@@ -360,6 +375,30 @@ export const WsSourceControlPublishRepositoryRpc = Rpc.make(
     error: Schema.Union([SourceControlRepositoryError, EnvironmentAuthorizationError]),
   },
 );
+
+export const WsScheduledMessagesListRpc = Rpc.make(WS_METHODS.scheduledMessagesList, {
+  payload: ScheduledMessagesListInput,
+  success: ScheduledMessagesListResult,
+  error: Schema.Union([ScheduledMessageOperationError, EnvironmentAuthorizationError]),
+});
+
+export const WsScheduledMessagesCreateRpc = Rpc.make(WS_METHODS.scheduledMessagesCreate, {
+  payload: ScheduledMessageCreateInput,
+  success: ScheduledMessage,
+  error: Schema.Union([ScheduledMessageOperationError, EnvironmentAuthorizationError]),
+});
+
+export const WsScheduledMessagesDeleteRpc = Rpc.make(WS_METHODS.scheduledMessagesDelete, {
+  payload: ScheduledMessageDeleteInput,
+  error: Schema.Union([ScheduledMessageOperationError, EnvironmentAuthorizationError]),
+});
+
+export const WsScheduledMessagesSubscribeRpc = Rpc.make(WS_METHODS.scheduledMessagesSubscribe, {
+  payload: ScheduledMessagesListInput,
+  success: ScheduledMessagesStreamEvent,
+  error: Schema.Union([ScheduledMessageOperationError, EnvironmentAuthorizationError]),
+  stream: true,
+});
 
 export const WsProjectsSearchEntriesRpc = Rpc.make(WS_METHODS.projectsSearchEntries, {
   payload: ProjectSearchEntriesInput,
@@ -718,6 +757,10 @@ export const WsRpcGroup = RpcGroup.make(
   WsSourceControlLookupRepositoryRpc,
   WsSourceControlCloneRepositoryRpc,
   WsSourceControlPublishRepositoryRpc,
+  WsScheduledMessagesListRpc,
+  WsScheduledMessagesCreateRpc,
+  WsScheduledMessagesDeleteRpc,
+  WsScheduledMessagesSubscribeRpc,
   WsProjectsListEntriesRpc,
   WsProjectsListClaudeSessionsRpc,
   WsProjectsImportClaudeSessionRpc,

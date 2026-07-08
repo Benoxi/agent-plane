@@ -6,6 +6,7 @@ import { Input } from "../ui/input";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { Spinner } from "../ui/spinner";
+import { ComposerVoiceDictationButton } from "./ComposerVoiceDictationButton";
 
 interface PendingActionState {
   questionIndex: number;
@@ -27,6 +28,13 @@ interface ComposerPrimaryActionsProps {
   isPreparingWorktree: boolean;
   hasSendableContent: boolean;
   scheduleDisabledReason: string | null;
+  voiceDictation?: {
+    disabled: boolean;
+    unsupportedReason: string | null;
+    isListening: boolean;
+    elapsedSeconds: number;
+    onToggle: () => void;
+  } | null;
   preserveComposerFocusOnPointerDown?: boolean;
   onPreviousPendingQuestion: () => void;
   onInterrupt: () => void;
@@ -56,6 +64,18 @@ const preventPointerFocus: PointerEventHandler<HTMLElement> = (event) => {
   event.preventDefault();
 };
 
+type ComposerPointerFocusTarget = "plain-action" | "floating-trigger";
+
+export function getComposerPointerFocusProps(
+  preserveComposerFocusOnPointerDown: boolean,
+  target: ComposerPointerFocusTarget,
+): { onPointerDown: PointerEventHandler<HTMLElement> } | undefined {
+  if (!preserveComposerFocusOnPointerDown || target === "floating-trigger") {
+    return undefined;
+  }
+  return { onPointerDown: preventPointerFocus };
+}
+
 export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
   compact,
   pendingAction,
@@ -68,15 +88,17 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
   isPreparingWorktree,
   hasSendableContent,
   scheduleDisabledReason,
+  voiceDictation,
   preserveComposerFocusOnPointerDown = false,
   onPreviousPendingQuestion,
   onInterrupt,
   onImplementPlanInNewThread,
   onSchedule,
 }: ComposerPrimaryActionsProps) {
-  const pointerFocusProps = preserveComposerFocusOnPointerDown
-    ? { onPointerDown: preventPointerFocus }
-    : undefined;
+  const pointerFocusProps = getComposerPointerFocusProps(
+    preserveComposerFocusOnPointerDown,
+    "plain-action",
+  );
   const [scheduleOpen, setScheduleOpen] = useState(false);
   const [delaySeconds, setDelaySeconds] = useState("30");
 
@@ -187,7 +209,6 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
                 variant="default"
                 className="h-9 rounded-l-none rounded-r-full border-l-white/12 px-2 sm:h-8"
                 aria-label="Implementation actions"
-                {...pointerFocusProps}
                 disabled={isSendBusy || isConnecting || isEnvironmentUnavailable}
               />
             }
@@ -218,7 +239,6 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
             <button
               type="button"
               className="flex h-9 w-9 items-center justify-center rounded-full border border-border/70 bg-card text-muted-foreground shadow-xs transition-colors duration-150 hover:bg-accent hover:text-foreground disabled:pointer-events-none disabled:opacity-30 sm:h-8 sm:w-8"
-              {...pointerFocusProps}
               disabled={scheduleDisabled}
               aria-label="Schedule message"
               title={scheduleDisabledReason ?? "Schedule message"}
@@ -279,6 +299,23 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
           </form>
         </PopoverPopup>
       </Popover>
+
+      {voiceDictation ? (
+        <ComposerVoiceDictationButton
+          disabled={
+            voiceDictation.disabled ||
+            isSendBusy ||
+            isConnecting ||
+            isEnvironmentUnavailable ||
+            isPreparingWorktree
+          }
+          unsupportedReason={voiceDictation.unsupportedReason}
+          isListening={voiceDictation.isListening}
+          elapsedSeconds={voiceDictation.elapsedSeconds}
+          preserveComposerFocusOnPointerDown={preserveComposerFocusOnPointerDown}
+          onToggle={voiceDictation.onToggle}
+        />
+      ) : null}
 
       <button
         type="submit"

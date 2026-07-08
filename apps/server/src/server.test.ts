@@ -113,6 +113,8 @@ import * as CloudCliTokenManager from "./cloud/CliTokenManager.ts";
 import * as ProcessDiagnostics from "./diagnostics/ProcessDiagnostics.ts";
 import * as ProcessResourceMonitor from "./diagnostics/ProcessResourceMonitor.ts";
 import * as TraceDiagnostics from "./diagnostics/TraceDiagnostics.ts";
+import { ScheduledMessageRepository } from "./persistence/Services/ScheduledMessages.ts";
+import { ScheduledMessageBus } from "./scheduledMessages/ScheduledMessageBus.ts";
 import * as Data from "effect/Data";
 
 const defaultProjectId = ProjectId.make("project-default");
@@ -524,7 +526,7 @@ const buildAppUnderTest = (options?: {
         })
       : VcsStatusBroadcaster.layer.pipe(Layer.provide(gitWorkflowLayer));
 
-    const servedRoutesLayer = HttpRouter.serve(makeRoutesLayer, {
+    const servedRoutesLayerBase = HttpRouter.serve(makeRoutesLayer, {
       disableListenLog: true,
       disableLogger: true,
     }).pipe(
@@ -740,6 +742,33 @@ const buildAppUnderTest = (options?: {
               diff: "",
             }),
           ...options?.layers?.checkpointDiffQuery,
+        }),
+      ),
+    );
+
+    const servedRoutesLayer = servedRoutesLayerBase.pipe(
+      Layer.provide(
+        Layer.succeed(ScheduledMessageRepository, {
+          list: () => Effect.succeed([]),
+          getById: () => Effect.succeed(Option.none()),
+          create: (input) => Effect.succeed(input),
+          upsert: (input) => Effect.succeed(input),
+          remove: () => Effect.void,
+          removeByThreadId: () => Effect.void,
+          listDue: () => Effect.succeed([]),
+          markSending: () => Effect.succeed(Option.none()),
+          markPending: () => Effect.succeed(Option.none()),
+          markFailed: () => Effect.succeed(Option.none()),
+          markExpired: () => Effect.succeed(Option.none()),
+          expireInterruptedAndOverdueOnStartup: () => Effect.succeed([]),
+        }),
+      ),
+      Layer.provide(
+        Layer.succeed(ScheduledMessageBus, {
+          publish: () => Effect.void,
+          stream: Stream.empty,
+          wake: Effect.void,
+          wakeups: Stream.empty,
         }),
       ),
     );
