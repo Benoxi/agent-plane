@@ -4282,14 +4282,25 @@ function ChatViewContent(props: ChatViewProps) {
           composerReviewComments.length,
       });
 
+      if (trimmedPrompt.length === 0) {
+        return;
+      }
+
       if (
-        trimmedPrompt.length === 0 ||
         composerImages.length > 0 ||
         composerTerminalContexts.length > 0 ||
         composerElementContexts.length > 0 ||
         composerPreviewAnnotations.length > 0 ||
         composerReviewComments.length > 0
       ) {
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: "Can't schedule with attachments",
+            description:
+              "Scheduling doesn't support images or context attachments yet. Send now, or remove them to schedule.",
+          }),
+        );
         return;
       }
 
