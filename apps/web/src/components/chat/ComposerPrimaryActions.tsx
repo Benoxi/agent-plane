@@ -1,8 +1,10 @@
-import { memo, type PointerEventHandler } from "react";
-import { ChevronDownIcon, ChevronLeftIcon } from "lucide-react";
+import { memo, type PointerEventHandler, useEffect, useState } from "react";
+import { ChevronDownIcon, ChevronLeftIcon, Clock3Icon } from "lucide-react";
 import { cn } from "~/lib/utils";
 import { Button } from "../ui/button";
+import { Input } from "../ui/input";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
+import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { Spinner } from "../ui/spinner";
 
 interface PendingActionState {
@@ -24,10 +26,12 @@ interface ComposerPrimaryActionsProps {
   isEnvironmentUnavailable: boolean;
   isPreparingWorktree: boolean;
   hasSendableContent: boolean;
+  scheduleDisabledReason: string | null;
   preserveComposerFocusOnPointerDown?: boolean;
   onPreviousPendingQuestion: () => void;
   onInterrupt: () => void;
   onImplementPlanInNewThread: () => void;
+  onSchedule: (delaySeconds: number) => void;
 }
 
 export const formatPendingPrimaryActionLabel = (input: {
@@ -63,14 +67,24 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
   isEnvironmentUnavailable,
   isPreparingWorktree,
   hasSendableContent,
+  scheduleDisabledReason,
   preserveComposerFocusOnPointerDown = false,
   onPreviousPendingQuestion,
   onInterrupt,
   onImplementPlanInNewThread,
+  onSchedule,
 }: ComposerPrimaryActionsProps) {
   const pointerFocusProps = preserveComposerFocusOnPointerDown
     ? { onPointerDown: preventPointerFocus }
     : undefined;
+  const [scheduleOpen, setScheduleOpen] = useState(false);
+  const [delaySeconds, setDelaySeconds] = useState("30");
+
+  useEffect(() => {
+    if (!scheduleOpen) {
+      setDelaySeconds("30");
+    }
+  }, [scheduleOpen]);
 
   if (pendingAction) {
     return (
@@ -193,37 +207,110 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
     );
   }
 
+  const parsedDelaySeconds = Number.parseInt(delaySeconds, 10);
+  const scheduleDisabled = scheduleDisabledReason !== null;
+
   return (
-    <button
-      type="submit"
-      className="flex h-9 w-9 enabled:cursor-pointer items-center justify-center rounded-full bg-primary/90 text-primary-foreground shadow-xs enabled:shadow-primary/24 enabled:inset-shadow-[0_1px_--theme(--color-white/16%)] transition-all duration-150 hover:bg-primary hover:scale-105 active:inset-shadow-[0_1px_--theme(--color-black/8%)] active:shadow-none disabled:pointer-events-none disabled:opacity-30 disabled:shadow-none disabled:hover:scale-100 sm:h-8 sm:w-8"
-      {...pointerFocusProps}
-      disabled={isSendBusy || isConnecting || isEnvironmentUnavailable || !hasSendableContent}
-      aria-label={
-        isEnvironmentUnavailable
-          ? "Environment disconnected"
-          : isConnecting
-            ? "Connecting"
-            : isPreparingWorktree
-              ? "Preparing worktree"
-              : isSendBusy
-                ? "Sending"
-                : "Send message"
-      }
-    >
-      {isConnecting || isSendBusy ? (
-        <Spinner className="size-3.5" aria-hidden="true" />
-      ) : (
-        <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">
-          <path
-            d="M7 11.5V2.5M7 2.5L3 6.5M7 2.5L11 6.5"
-            stroke="currentColor"
-            strokeWidth="1.8"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          />
-        </svg>
-      )}
-    </button>
+    <div className="flex items-center justify-end gap-2">
+      <Popover open={scheduleOpen} onOpenChange={setScheduleOpen}>
+        <PopoverTrigger
+          render={
+            <button
+              type="button"
+              className="flex h-9 w-9 items-center justify-center rounded-full border border-border/70 bg-card text-muted-foreground shadow-xs transition-colors duration-150 hover:bg-accent hover:text-foreground disabled:pointer-events-none disabled:opacity-30 sm:h-8 sm:w-8"
+              {...pointerFocusProps}
+              disabled={scheduleDisabled}
+              aria-label="Schedule message"
+              title={scheduleDisabledReason ?? "Schedule message"}
+            />
+          }
+        >
+          <Clock3Icon className="size-3.5" />
+        </PopoverTrigger>
+        <PopoverPopup side="top" align="end" sideOffset={8} className="w-72 p-3">
+          <form
+            className="space-y-3"
+            onSubmit={(event) => {
+              event.preventDefault();
+              if (!Number.isFinite(parsedDelaySeconds) || parsedDelaySeconds <= 0) {
+                return;
+              }
+              onSchedule(parsedDelaySeconds);
+              setScheduleOpen(false);
+            }}
+          >
+            <div className="space-y-1">
+              <div className="font-medium text-sm">Schedule send</div>
+              <div className="text-muted-foreground text-xs">
+                Queue this message to send after a delay in seconds.
+              </div>
+            </div>
+            <label className="block space-y-1">
+              <span className="text-muted-foreground text-xs">Seconds</span>
+              <Input
+                nativeInput
+                type="number"
+                min={1}
+                step={1}
+                value={delaySeconds}
+                onChange={(event) => {
+                  setDelaySeconds(event.currentTarget.value);
+                }}
+                autoFocus
+              />
+            </label>
+            <div className="flex items-center justify-end gap-2">
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                onClick={() => setScheduleOpen(false)}
+              >
+                Cancel
+              </Button>
+              <Button
+                type="submit"
+                size="sm"
+                disabled={!Number.isFinite(parsedDelaySeconds) || parsedDelaySeconds <= 0}
+              >
+                Schedule
+              </Button>
+            </div>
+          </form>
+        </PopoverPopup>
+      </Popover>
+
+      <button
+        type="submit"
+        className="flex h-9 w-9 enabled:cursor-pointer items-center justify-center rounded-full bg-primary/90 text-primary-foreground shadow-xs enabled:shadow-primary/24 enabled:inset-shadow-[0_1px_--theme(--color-white/16%)] transition-all duration-150 hover:bg-primary hover:scale-105 active:inset-shadow-[0_1px_--theme(--color-black/8%)] active:shadow-none disabled:pointer-events-none disabled:opacity-30 disabled:shadow-none disabled:hover:scale-100 sm:h-8 sm:w-8"
+        {...pointerFocusProps}
+        disabled={isSendBusy || isConnecting || isEnvironmentUnavailable || !hasSendableContent}
+        aria-label={
+          isEnvironmentUnavailable
+            ? "Environment disconnected"
+            : isConnecting
+              ? "Connecting"
+              : isPreparingWorktree
+                ? "Preparing worktree"
+                : isSendBusy
+                  ? "Sending"
+                  : "Send message"
+        }
+      >
+        {isConnecting || isSendBusy ? (
+          <Spinner className="size-3.5" aria-hidden="true" />
+        ) : (
+          <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">
+            <path
+              d="M7 11.5V2.5M7 2.5L3 6.5M7 2.5L11 6.5"
+              stroke="currentColor"
+              strokeWidth="1.8"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+          </svg>
+        )}
+      </button>
+    </div>
   );
 });

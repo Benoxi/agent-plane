@@ -21,6 +21,10 @@ import {
   ThreadStatusLabel,
   ThreadWorktreeIndicator,
 } from "./ThreadStatusIndicators";
+import {
+  ClaudeSessionImportDialog,
+  type ClaudeSessionImportTarget,
+} from "./ClaudeSessionImportDialog";
 import { ProjectFavicon } from "./ProjectFavicon";
 import { useAtomValue } from "@effect/atom-react";
 import { autoAnimate } from "@formkit/auto-animate";
@@ -1213,6 +1217,9 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
   const [projectRenameTitle, setProjectRenameTitle] = useState("");
   const [projectGroupingTarget, setProjectGroupingTarget] =
     useState<SidebarProjectGroupMember | null>(null);
+  const [claudeImportTarget, setClaudeImportTarget] = useState<ClaudeSessionImportTarget | null>(
+    null,
+  );
   const [projectGroupingSelection, setProjectGroupingSelection] = useState<
     SidebarProjectGroupingMode | "inherit"
   >("inherit");
@@ -1434,6 +1441,16 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
     [projectGroupingSettings.sidebarProjectGroupingOverrides],
   );
 
+  const openClaudeImportDialog = useCallback((member: SidebarProjectGroupMember) => {
+    setClaudeImportTarget({
+      environmentId: member.environmentId,
+      projectId: member.id,
+      title: member.title,
+      workspaceRoot: member.workspaceRoot,
+      ...(member.environmentLabel ? { environmentLabel: member.environmentLabel } : {}),
+    });
+  }, []);
+
   const removeProject = useCallback(
     async (member: SidebarProjectGroupMember, options: { force?: boolean } = {}) => {
       const memberProjectRef = scopeProjectRef(member.environmentId, member.id);
@@ -1596,7 +1613,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
 
         const actionHandlers = new Map<string, () => Promise<void> | void>();
         const makeLeaf = (
-          action: "rename" | "grouping" | "copy-path" | "delete",
+          action: "rename" | "grouping" | "import-claude" | "copy-path" | "delete",
           member: SidebarProjectGroupMember,
           options?: {
             destructive?: boolean;
@@ -1611,6 +1628,9 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
                 return;
               case "grouping":
                 openProjectGroupingDialog(member);
+                return;
+              case "import-claude":
+                openClaudeImportDialog(member);
                 return;
               case "copy-path":
                 copyPathToClipboard(member.workspaceRoot, { path: member.workspaceRoot });
@@ -1629,7 +1649,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
         };
 
         const buildTargetedItem = (
-          action: "rename" | "grouping" | "copy-path" | "delete",
+          action: "rename" | "grouping" | "import-claude" | "copy-path" | "delete",
           label: string,
           options?: {
             destructive?: boolean;
@@ -1665,6 +1685,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
           [
             buildTargetedItem("rename", "Rename"),
             buildTargetedItem("grouping", "Group into..."),
+            buildTargetedItem("import-claude", "Import Claude Thread"),
             buildTargetedItem("copy-path", "Copy Path"),
             buildTargetedItem("delete", "Remove", {
               destructive: true,
@@ -1686,6 +1707,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
     [
       copyPathToClipboard,
       handleRemoveProject,
+      openClaudeImportDialog,
       openProjectGroupingDialog,
       openProjectRenameDialog,
       project.groupedProjectCount,
@@ -2340,6 +2362,16 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
         openPrLink={openPrLink}
         expandThreadListForProject={expandThreadListForProject}
         collapseThreadListForProject={collapseThreadListForProject}
+      />
+
+      <ClaudeSessionImportDialog
+        open={claudeImportTarget !== null}
+        onOpenChange={(open) => {
+          if (!open) {
+            setClaudeImportTarget(null);
+          }
+        }}
+        target={claudeImportTarget}
       />
 
       <Dialog
