@@ -59,6 +59,10 @@ import {
 } from "../../lib/terminalContext";
 import { useComposerPathSearch } from "../../lib/composerPathSearchState";
 import { type ElementContextDraft } from "../../lib/elementContext";
+import {
+  createComposerSpeechRecognition,
+  detectSpeechRecognitionSupport,
+} from "../../lib/speechRecognition";
 import { ComposerPendingElementContexts } from "./ComposerPendingElementContexts";
 import { ComposerPendingReviewComments } from "./ComposerPendingReviewComments";
 import { ComposerPreviewAnnotationCards } from "./ComposerPreviewAnnotationCards";
@@ -72,6 +76,7 @@ import { type ComposerCommandItem, ComposerCommandMenu } from "./ComposerCommand
 import { ComposerPendingApprovalActions } from "./ComposerPendingApprovalActions";
 import { CompactComposerControlsMenu } from "./CompactComposerControlsMenu";
 import { ComposerPrimaryActions } from "./ComposerPrimaryActions";
+import { ComposerVoiceDictationButton } from "./ComposerVoiceDictationButton";
 import { ComposerPendingApprovalPanel } from "./ComposerPendingApprovalPanel";
 import { ComposerPendingUserInputPanel } from "./ComposerPendingUserInputPanel";
 import { ComposerPlanFollowUpBanner } from "./ComposerPlanFollowUpBanner";
@@ -127,6 +132,9 @@ import { useMediaQuery } from "../../hooks/useMediaQuery";
 import type { ReviewCommentContext } from "../../reviewCommentContext";
 
 const IMAGE_SIZE_LIMIT_LABEL = `${Math.round(PROVIDER_SEND_TURN_MAX_IMAGE_BYTES / (1024 * 1024))}MB`;
+const VOICE_DICTATION_MAX_SECONDS = 60;
+
+type ComposerVoiceState = "idle" | "listening" | "stopping";
 
 const runtimeModeConfig: Record<
   RuntimeMode,
@@ -346,6 +354,13 @@ const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryActions(
   isConnecting: boolean;
   isEnvironmentUnavailable: boolean;
   hasSendableContent: boolean;
+  voiceDictation: {
+    disabled: boolean;
+    unsupportedReason: string | null;
+    isListening: boolean;
+    elapsedSeconds: number;
+    onToggle: () => void;
+  } | null;
   preserveComposerFocusOnPointerDown?: boolean;
   onPreviousPendingQuestion: () => void;
   onInterrupt: () => void;
@@ -361,6 +376,21 @@ const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryActions(
       ) : null}
       {props.isPreparingWorktree ? (
         <span className="text-muted-foreground/70 text-xs">Preparing worktree...</span>
+      ) : null}
+      {props.voiceDictation &&
+      !props.pendingAction &&
+      !props.isRunning &&
+      !props.showPlanFollowUpPrompt ? (
+        <ComposerVoiceDictationButton
+          disabled={props.voiceDictation.disabled}
+          unsupportedReason={props.voiceDictation.unsupportedReason}
+          isListening={props.voiceDictation.isListening}
+          elapsedSeconds={props.voiceDictation.elapsedSeconds}
+          {...(props.preserveComposerFocusOnPointerDown === undefined
+            ? {}
+            : { preserveComposerFocusOnPointerDown: props.preserveComposerFocusOnPointerDown })}
+          onToggle={props.voiceDictation.onToggle}
+        />
       ) : null}
       <ComposerPrimaryActions
         compact={props.compact}
@@ -881,6 +911,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const [isComposerPrimaryActionsCompact, setIsComposerPrimaryActionsCompact] = useState(false);
   const [isComposerModelPickerOpen, setIsComposerModelPickerOpen] = useState(false);
   const [isComposerFocused, setIsComposerFocused] = useState(false);
+  const [voiceState, setVoiceState] = useState<ComposerVoiceState>("idle");
+  const [voiceElapsedSeconds, setVoiceElapsedSeconds] = useState(0);
   const isMobileViewport = useMediaQuery("max-sm");
   const isComposerCollapsedMobile = isMobileViewport && !isComposerFocused;
 
@@ -899,6 +931,13 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const mobileComposerExpandReleaseFrameRef = useRef<number | null>(null);
   const mobileComposerExpandInFlightRef = useRef(false);
   const dragDepthRef = useRef(0);
+  const speechRecognitionRef = useRef<ReturnType<typeof createComposerSpeechRecognition> | null>(
+    null,
+  );
+  const voiceTimeoutRef = useRef<number | null>(null);
+  const voiceTickerRef = useRef<number | null>(null);
+  const voiceFinalTextRef = useRef("");
+  const voiceErroredRef = useRef(false);
 
   // ------------------------------------------------------------------
   // Derived: composer send state
@@ -1534,6 +1573,159 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     };
   }, [composerCursor, composerTerminalContexts, promptRef]);
 
+  const clearVoiceTimers = useCallback(() => {
+    if (voiceTimeoutRef.current !== null) {
+      window.clearTimeout(voiceTimeoutRef.current);
+      voiceTimeoutRef.current = null;
+    }
+    if (voiceTickerRef.current !== null) {
+      window.clearInterval(voiceTickerRef.current);
+      voiceTickerRef.current = null;
+    }
+  }, []);
+
+  const insertDictationText = useCallback(
+    (rawText: string) => {
+      const transcript = rawText.trim();
+      if (!transcript) return;
+      const snapshot = readComposerSnapshot();
+      const before = snapshot.value.slice(0, snapshot.expandedCursor);
+      const after = snapshot.value.slice(snapshot.expandedCursor);
+      const prefix = before.length > 0 && !/\s$/u.test(before) ? " " : "";
+      const suffix = after.length > 0 && !/^\s/u.test(after) ? " " : "";
+      applyPromptReplacement(
+        snapshot.expandedCursor,
+        snapshot.expandedCursor,
+        `${prefix}${transcript}${suffix}`,
+      );
+    },
+    [applyPromptReplacement, readComposerSnapshot],
+  );
+
+  const stopVoiceDictation = useCallback(() => {
+    const recognition = speechRecognitionRef.current;
+    if (!recognition) return;
+    setVoiceState((current) => (current === "listening" ? "stopping" : current));
+    recognition.stop();
+  }, []);
+
+  const startVoiceDictation = useCallback(() => {
+    if (speechRecognitionRef.current) {
+      stopVoiceDictation();
+      return;
+    }
+
+    const support = detectSpeechRecognitionSupport();
+    if (!support.supported) {
+      toastManager.add({
+        type: "error",
+        title: "Voice dictation unavailable",
+        description:
+          support.reason === "insecure-context"
+            ? "Voice dictation requires a secure browser context."
+            : "Voice dictation is not supported in this browser.",
+      });
+      return;
+    }
+
+    const startedAtMs = Date.now();
+    voiceFinalTextRef.current = "";
+    voiceErroredRef.current = false;
+    setVoiceElapsedSeconds(0);
+    setVoiceState("listening");
+
+    const recognition = createComposerSpeechRecognition({
+      language: globalThis.navigator?.language || "en-US",
+      onFinalText: (text) => {
+        voiceFinalTextRef.current = [voiceFinalTextRef.current, text]
+          .filter((chunk) => chunk.trim().length > 0)
+          .join(" ");
+      },
+      onInterimText: () => undefined,
+      onError: (message) => {
+        voiceErroredRef.current = true;
+        clearVoiceTimers();
+        speechRecognitionRef.current = null;
+        voiceFinalTextRef.current = "";
+        setVoiceElapsedSeconds(0);
+        setVoiceState("idle");
+        toastManager.add({ type: "error", title: "Voice dictation failed", description: message });
+      },
+      onEnd: () => {
+        const finalText = voiceFinalTextRef.current;
+        const errored = voiceErroredRef.current;
+        clearVoiceTimers();
+        speechRecognitionRef.current = null;
+        voiceFinalTextRef.current = "";
+        voiceErroredRef.current = false;
+        setVoiceElapsedSeconds(0);
+        setVoiceState("idle");
+        if (!errored) insertDictationText(finalText);
+      },
+    });
+
+    speechRecognitionRef.current = recognition;
+    try {
+      recognition.start();
+    } catch (cause) {
+      clearVoiceTimers();
+      speechRecognitionRef.current = null;
+      voiceFinalTextRef.current = "";
+      voiceErroredRef.current = false;
+      setVoiceElapsedSeconds(0);
+      setVoiceState("idle");
+      toastManager.add({
+        type: "error",
+        title: "Voice dictation failed",
+        description: cause instanceof Error ? cause.message : "Voice dictation failed.",
+      });
+      return;
+    }
+
+    voiceTickerRef.current = window.setInterval(() => {
+      setVoiceElapsedSeconds(Math.floor((Date.now() - startedAtMs) / 1000));
+    }, 250);
+    voiceTimeoutRef.current = window.setTimeout(() => {
+      stopVoiceDictation();
+    }, VOICE_DICTATION_MAX_SECONDS * 1000);
+  }, [clearVoiceTimers, insertDictationText, stopVoiceDictation]);
+
+  const toggleVoiceDictation = useCallback(() => {
+    if (voiceState === "listening" || voiceState === "stopping") {
+      stopVoiceDictation();
+      return;
+    }
+    startVoiceDictation();
+  }, [startVoiceDictation, stopVoiceDictation, voiceState]);
+
+  const voiceDictation = useMemo(() => {
+    const support = detectSpeechRecognitionSupport();
+    return {
+      disabled:
+        isConnecting ||
+        isSendBusy ||
+        isPreparingWorktree ||
+        environmentUnavailable !== null ||
+        voiceState === "stopping",
+      unsupportedReason: support.supported
+        ? null
+        : support.reason === "insecure-context"
+          ? "Voice dictation requires HTTPS, localhost, or the desktop app."
+          : "Voice dictation is not supported in this browser.",
+      isListening: voiceState === "listening" || voiceState === "stopping",
+      elapsedSeconds: Math.min(VOICE_DICTATION_MAX_SECONDS, voiceElapsedSeconds),
+      onToggle: toggleVoiceDictation,
+    };
+  }, [
+    environmentUnavailable,
+    isConnecting,
+    isPreparingWorktree,
+    isSendBusy,
+    toggleVoiceDictation,
+    voiceElapsedSeconds,
+    voiceState,
+  ]);
+
   const resolveActiveComposerTrigger = useCallback((): {
     snapshot: { value: string; cursor: number; expandedCursor: number };
     trigger: ComposerTrigger | null;
@@ -1894,6 +2086,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
 
   useEffect(() => {
     return () => {
+      speechRecognitionRef.current?.abort();
+      speechRecognitionRef.current = null;
+      clearVoiceTimers();
       if (composerBlurFrameRef.current !== null) {
         window.cancelAnimationFrame(composerBlurFrameRef.current);
       }
@@ -1904,7 +2099,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         window.cancelAnimationFrame(mobileComposerExpandReleaseFrameRef.current);
       }
     };
-  }, []);
+  }, [clearVoiceTimers]);
 
   // ------------------------------------------------------------------
   // Imperative handle
@@ -2550,6 +2745,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                   isEnvironmentUnavailable={environmentUnavailable !== null}
                   isPreparingWorktree={isPreparingWorktree}
                   hasSendableContent={composerSendState.hasSendableContent}
+                  voiceDictation={voiceDictation}
                   preserveComposerFocusOnPointerDown={isMobileViewport}
                   onPreviousPendingQuestion={onPreviousActivePendingUserInputQuestion}
                   onInterrupt={handleInterruptPrimaryAction}
