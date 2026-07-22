@@ -18,6 +18,8 @@ const SCHEDULED_MESSAGE_STORAGE_KEY = "t3code:scheduled-messages:v1";
 
 export const ScheduledMessageStatus = Schema.Literals(["pending", "sending", "failed", "expired"]);
 export type ScheduledMessageStatus = typeof ScheduledMessageStatus.Type;
+export const ScheduledMessageSource = Schema.Literals(["manual", "rate-limit-auto-continue"]);
+export type ScheduledMessageSource = typeof ScheduledMessageSource.Type;
 
 export const ScheduledMessage = Schema.Struct({
   id: Schema.String,
@@ -33,6 +35,8 @@ export const ScheduledMessage = Schema.Struct({
   scheduledFor: Schema.String,
   status: ScheduledMessageStatus,
   lastError: Schema.optional(Schema.String),
+  source: Schema.optional(ScheduledMessageSource),
+  sourceActivityId: Schema.optional(Schema.String),
 });
 export type ScheduledMessage = typeof ScheduledMessage.Type;
 
@@ -52,6 +56,8 @@ interface ScheduleThreadMessageInput {
   interactionMode: ScheduledMessage["interactionMode"];
   delaySeconds: number;
   now?: string;
+  source?: ScheduledMessageSource;
+  sourceActivityId?: string;
 }
 
 const EMPTY_STATE: ScheduledMessageState = { items: [] };
@@ -204,6 +210,17 @@ export function useScheduledMessagesForThread(
   );
 }
 
+export function hasPendingAutoContinueForThread(threadRef: ScopedThreadRef): boolean {
+  ensureHydrated();
+  return state.items.some(
+    (item) =>
+      item.environmentId === threadRef.environmentId &&
+      item.threadId === threadRef.threadId &&
+      item.source === "rate-limit-auto-continue" &&
+      (item.status === "pending" || item.status === "sending"),
+  );
+}
+
 export function scheduleThreadMessage(input: ScheduleThreadMessageInput): ScheduledMessage {
   const scheduledAt = input.now ? new Date(input.now) : new Date();
   const scheduledFor = new Date(scheduledAt.getTime() + Math.max(1, input.delaySeconds) * 1000);
@@ -220,6 +237,8 @@ export function scheduleThreadMessage(input: ScheduleThreadMessageInput): Schedu
     createdAt: scheduledAt.toISOString(),
     scheduledFor: scheduledFor.toISOString(),
     status: "pending",
+    source: input.source,
+    sourceActivityId: input.sourceActivityId,
   };
   updateState((current) => ({
     items: sortItems([...current.items, item]),
