@@ -1,32 +1,34 @@
 # Scripts
 
-- `pnpm run dev` — Starts contracts, server, and web in `turbo watch` mode.
-- `pnpm run dev:server` — Starts just the WebSocket server.
-- `pnpm run dev:web` — Starts just the Vite dev server for the web app.
-- Dev commands default `T3CODE_STATE_DIR` to `~/.t3/dev` to keep dev state isolated from desktop/prod state.
-- Override server CLI-equivalent flags from root dev commands with `--`, for example:
-  `pnpm run dev -- --base-dir ~/.t3-2`
-- `pnpm run start` — Runs the production server (serves built web app as static files).
-- `pnpm run build` — Builds contracts, web app, and server through Turbo.
-- `pnpm run typecheck` — Strict TypeScript checks for all packages.
-- `pnpm run test` — Runs workspace tests.
-- `pnpm run dist:desktop:artifact -- --platform <mac|linux|win> --target <target> --arch <arch>` — Builds a desktop artifact for a specific platform/target/arch.
-- `pnpm run dist:desktop:dmg` — Builds a shareable macOS `.dmg` into `./release`.
-- `pnpm run dist:desktop:dmg:x64` — Builds an Intel macOS `.dmg`.
-- `pnpm run dist:desktop:linux` — Builds a Linux AppImage into `./release`.
-- `pnpm run dist:desktop:fedora` — Builds a Fedora-focused Linux AppImage into `./release-fedora`.
-- `pnpm run install:desktop:fedora` — Installs the latest Fedora AppImage into `~/.local/share/t3code/stable` and creates a launcher that shares the default `~/.t3` state with the installed desktop app.
-- `pnpm run refresh:desktop:fedora` — Builds the Fedora AppImage, closes running T3 Code desktop processes after a successful build, installs the refreshed AppImage, and launches it.
-- `pnpm run dist:desktop:win` — Builds a Windows NSIS installer into `./release`.
+- `vp run dev` — Starts contracts, server, and web in watch mode.
+- `vp run dev:server` — Starts just the WebSocket server. The server process runs on Bun (`@effect/platform-bun` + `BunPtyAdapter`), but task running uses `vp run`.
+- `vp run dev:web` — Starts just the Vite dev server for the web app.
+- Dev commands implicitly use `~/.t3/dev`, keeping development state separate from `~/.t3/userdata`. An explicit `--home-dir <path>` stores state under `<path>/userdata`; the base directory remains available for caches, worktrees, and other shared data.
+- Web dev commands do not auto-open a browser. Open the one-time pairing URL printed by the server so the first browser navigation is authenticated. Set `T3CODE_NO_BROWSER=0` only when interactive auto-open is intentional.
+- Pass dev-runner flags directly after the root task name, for example:
+  `vp run dev --home-dir /tmp/t3code-dev`
+- `vp run start` — Runs the production server (serves built web app as static files).
+- `vp run build` — Builds contracts, web app, and server.
+- `vp run typecheck` — Strict TypeScript checks for all packages.
+- `vp run test` — Runs workspace tests.
+- `node apps/server/scripts/t3-sqlite-state.ts <query|exec> --base-dir <path> ...` — Inspects or seeds an isolated T3 SQLite database; writes create a private backup first.
+- `vp run dist:desktop:artifact -- --platform <mac|linux|win> --target <target> --arch <arch>` — Builds a desktop artifact for a specific platform/target/arch.
+- `vp run dist:desktop:dmg` — Builds a shareable macOS `.dmg` into `./release`.
+- `vp run dist:desktop:dmg:x64` — Builds an Intel macOS `.dmg`.
+- `vp run dist:desktop:linux` — Builds a Linux AppImage into `./release`.
+- `vp run dist:desktop:fedora` — Builds a Fedora AppImage into `./release-fedora`.
+- `vp run install:desktop:fedora` — Installs the latest Fedora AppImage into `~/.local/share/t3code/stable` and creates a launcher that shares the default `~/.t3` state with the installed desktop app.
+- `vp run refresh:desktop:fedora` — Builds, installs, and launches a refreshed Fedora AppImage.
+- `vp run dist:desktop:win` — Builds a Windows NSIS installer into `./release`.
 
 ## Desktop `.dmg` packaging notes
 
 - Default build is unsigned/not notarized for local sharing.
-- The DMG build uses `assets/macos-icon-1024.png` as the production app icon source.
+- The DMG build uses `assets/prod/black-macos-1024.png` as the production app icon source.
 - Desktop production windows load the bundled UI from `t3code://app/index.html` (not a `127.0.0.1` document URL).
 - Desktop packaging includes `apps/server/dist` (the `t3` backend) and starts it on loopback with an auth token for WebSocket/API traffic.
 - Your tester can still open it on macOS by right-clicking the app and choosing **Open** on first launch.
-- To keep staging files for debugging package contents, run: `pnpm run dist:desktop:dmg -- --keep-stage`
+- To keep staging files for debugging package contents, run: `vp run dist:desktop:dmg -- --keep-stage`
 - To allow code-signing/notarization when configured in CI/secrets, add: `--signed`.
 - Signed macOS builds also require `T3CODE_APPLE_TEAM_ID` and
   `T3CODE_MACOS_PROVISIONING_PROFILE`. The passkey RP domain is derived from
@@ -41,8 +43,8 @@
 
 Set `T3CODE_DEV_INSTANCE` to any value to deterministically shift all dev ports together.
 
-- Default ports: server `3773`, web `5733`
+- Default ports: server `13773`, web `5733`
 - Shifted ports: `base + offset` (offset is hashed from `T3CODE_DEV_INSTANCE`)
-- Example: `T3CODE_DEV_INSTANCE=branch-a pnpm run dev:desktop`
+- Example: `T3CODE_DEV_INSTANCE=branch-a vp run dev:desktop`
 
 If you want full control instead of hashing, set `T3CODE_PORT_OFFSET` to a numeric offset.
