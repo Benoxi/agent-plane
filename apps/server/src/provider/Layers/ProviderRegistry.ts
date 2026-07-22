@@ -669,6 +669,10 @@ export const ProviderRegistryLive = Layer.effect(
       Stream.fromSubscription(instanceChanges),
       () => syncLiveSourcesAndContinue,
     ).pipe(Effect.forkScoped);
+    // Start the consumer before exposing the registry. The subscription was
+    // acquired above, so no update can be lost; yielding here also ensures a
+    // settings-driven rebuild is processed promptly during startup.
+    yield* Effect.yieldNow;
 
     const recoverRefreshFailure = Effect.fn("recoverRefreshFailure")(function* (
       cause: Cause.Cause<unknown>,

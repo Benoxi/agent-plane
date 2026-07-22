@@ -118,7 +118,11 @@ const SettingsWatcherLive = Layer.effectDiscard(
   Effect.gen(function* () {
     const mutator = yield* ProviderInstanceRegistryMutator;
     const serverSettings = yield* ServerSettingsService;
-    yield* serverSettings.streamChanges.pipe(
+    // Acquire the subscription before forking its consumer. `streamChanges`
+    // subscribes lazily, so the previous fork could miss an update published
+    // between layer construction and the watcher starting.
+    const settingsChanges = yield* serverSettings.subscribeChanges;
+    yield* settingsChanges.pipe(
       Stream.runForEach((next) =>
         mutator
           .reconcile(deriveProviderInstanceConfigMap(next))
@@ -130,6 +134,10 @@ const SettingsWatcherLive = Layer.effectDiscard(
       ),
       Effect.forkScoped,
     );
+    // Let the consumer enter its dequeue loop before layer construction
+    // completes. The subscription above already buffers updates, while this
+    // avoids deferring the first reconcile behind unrelated startup work.
+    yield* Effect.yieldNow;
   }),
 );
 

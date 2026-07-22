@@ -127,6 +127,14 @@ export class ServerSettingsService extends Context.Service<
 
     /** Stream of settings change events. */
     readonly streamChanges: Stream.Stream<ServerSettings>;
+
+    /**
+     * Acquire a settings-change stream before its consumer is forked.
+     *
+     * This avoids dropping an update between scheduling a watcher and its
+     * eventual PubSub subscription.
+     */
+    readonly subscribeChanges: Effect.Effect<Stream.Stream<ServerSettings>>;
   }
 >()("t3/serverSettings/ServerSettingsService") {
   /** @deprecated Import and use `layerTest` from this module. */
@@ -156,6 +164,7 @@ const makeTest = (overrides: DeepPartial<ServerSettings> = {}) =>
           Effect.tap((nextSettings) => Ref.set(currentSettingsRef, nextSettings)),
         ),
       streamChanges: Stream.empty,
+      subscribeChanges: Effect.succeed(Stream.empty),
     } satisfies ServerSettingsService["Service"];
   });
 
@@ -556,6 +565,23 @@ const make = Effect.gen(function* () {
     yield* Deferred.succeed(startedDeferred, undefined).pipe(Effect.orDie);
   });
 
+  const normalizeChangeStream = (stream: Stream.Stream<ServerSettings>) =>
+    stream.pipe(
+      Stream.mapEffect((settings) =>
+        materializeProviderEnvironmentSecrets(settings).pipe(
+          Effect.catch((error: ServerSettingsError) =>
+            Effect.logWarning("failed to materialize provider environment secrets", {
+              operation: error.operation,
+              providerInstanceId: error.providerInstanceId,
+              environmentVariable: error.environmentVariable,
+              cause: error.cause,
+            }).pipe(Effect.as(settings)),
+          ),
+        ),
+      ),
+      Stream.map(resolveTextGenerationProvider),
+    );
+
   return {
     start,
     ready: Deferred.await(startedDeferred),
@@ -580,20 +606,11 @@ const make = Effect.gen(function* () {
         }),
       ),
     get streamChanges() {
-      return Stream.fromPubSub(changesPubSub).pipe(
-        Stream.mapEffect((settings) =>
-          materializeProviderEnvironmentSecrets(settings).pipe(
-            Effect.catch((error: ServerSettingsError) =>
-              Effect.logWarning("failed to materialize provider environment secrets", {
-                operation: error.operation,
-                providerInstanceId: error.providerInstanceId,
-                environmentVariable: error.environmentVariable,
-                cause: error.cause,
-              }).pipe(Effect.as(settings)),
-            ),
-          ),
-        ),
-        Stream.map(resolveTextGenerationProvider),
+      return normalizeChangeStream(Stream.fromPubSub(changesPubSub));
+    },
+    get subscribeChanges() {
+      return PubSub.subscribe(changesPubSub).pipe(
+        Effect.map((subscription) => normalizeChangeStream(Stream.fromSubscription(subscription))),
       );
     },
   } satisfies ServerSettingsService["Service"];

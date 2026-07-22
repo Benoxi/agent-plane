@@ -297,6 +297,11 @@ function makeMutableServerSettingsService(
       get streamChanges() {
         return Stream.fromPubSub(changes);
       },
+      get subscribeChanges() {
+        return PubSub.subscribe(changes).pipe(
+          Effect.map((subscription) => Stream.fromSubscription(subscription)),
+        );
+      },
     } satisfies ServerSettingsModule.ServerSettingsService["Service"];
   });
 }
@@ -1279,6 +1284,12 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
                 codex: { enabled: true, binaryPath: secondMissing },
               },
             });
+
+            // The injected Node process boundary reports ENOENT on the
+            // host event loop, while this test advances Effect's TestClock.
+            // Give that real asynchronous boundary a scheduling turn before
+            // polling the registry with virtual time.
+            yield* Effect.promise(() => new Promise<void>((resolve) => setTimeout(resolve, 50)));
 
             // Poll until the injected process boundary observes the new
             // executable. This verifies the public settings-to-probe behavior
