@@ -203,6 +203,32 @@ describe.sequential("signRelayAgentActivityPublishProof", () => {
     ).toBe(false);
   });
 
+  it("suppresses child task lifecycle noise while retaining primary-thread publication", () => {
+    for (const kind of ["task.started", "task.progress", "task.completed"]) {
+      expect(AgentAwarenessRelay.shouldPublishAgentAwarenessActivityKind(kind)).toBe(false);
+    }
+
+    expect(AgentAwarenessRelay.shouldPublishAgentAwarenessActivityKind("approval.requested")).toBe(
+      true,
+    );
+
+    const primarySessionCompletion = {
+      type: "thread.session-set",
+      sequence: 1,
+      eventId: "evt-primary-session-completed",
+      commandId: CommandId.make("cmd-primary-session-completed"),
+      aggregateKind: "thread",
+      aggregateId: "thread-primary" as ThreadId,
+      actor: { kind: "server" },
+      payload: {},
+      occurredAt: "2026-05-25T00:00:00.000Z",
+    } as unknown as OrchestrationEvent;
+
+    expect(AgentAwarenessRelay.shouldPublishAgentAwarenessEvent(primarySessionCompletion)).toBe(
+      true,
+    );
+  });
+
   it("deduplicates awareness state updates whose only change is their event timestamp", () => {
     expect(AgentAwarenessRelay.agentAwarenessPublishIdentity(state)).toBe(
       AgentAwarenessRelay.agentAwarenessPublishIdentity({
