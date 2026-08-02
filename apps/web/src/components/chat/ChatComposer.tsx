@@ -38,6 +38,7 @@ import {
   clampCollapsedComposerCursor,
   type ComposerTrigger,
   collapseExpandedComposerCursor,
+  deriveCollapsedComposerPrimaryAction,
   detectComposerTrigger,
   expandCollapsedComposerCursor,
   replaceTextRange,
@@ -1276,14 +1277,14 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     isServerThread,
     prompt,
   ]);
-  const collapsedComposerPrimaryActionDisabled =
-    phase === "running" ||
-    isSendBusy ||
-    isConnecting ||
-    projectSelectionRequired ||
-    environmentUnavailable !== null ||
-    !composerSendState.hasSendableContent;
-  const collapsedComposerPrimaryActionLabel = "Send message";
+  const collapsedComposerPrimaryAction = deriveCollapsedComposerPrimaryAction({
+    isRunning: phase === "running",
+    isSendBusy,
+    isConnecting,
+    projectSelectionRequired,
+    environmentUnavailable: environmentUnavailable !== null,
+    hasSendableContent: composerSendState.hasSendableContent,
+  });
   const showMobilePendingAnswerActions =
     isMobileViewport && !isComposerCollapsedMobile && pendingPrimaryAction !== null;
 
@@ -2621,24 +2622,45 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
               </button>
               <button
                 type="button"
-                className="flex size-8 shrink-0 items-center justify-center rounded-full bg-primary/90 text-primary-foreground disabled:opacity-30"
-                disabled={collapsedComposerPrimaryActionDisabled}
-                aria-label={collapsedComposerPrimaryActionLabel}
+                className={cn(
+                  "flex size-8 shrink-0 items-center justify-center rounded-full text-primary-foreground disabled:opacity-30",
+                  collapsedComposerPrimaryAction.kind === "stop"
+                    ? "bg-destructive/90"
+                    : "bg-primary/90",
+                )}
+                disabled={collapsedComposerPrimaryAction.disabled}
+                aria-label={collapsedComposerPrimaryAction.label}
                 onPointerDown={(event) => event.preventDefault()}
                 onClick={(event) => {
                   event.stopPropagation();
+                  if (collapsedComposerPrimaryAction.kind === "stop") {
+                    handleInterruptPrimaryAction();
+                    return;
+                  }
                   submitComposer();
                 }}
               >
-                <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-                  <path
-                    d="M8 3L8 13M8 3L4 7M8 3L12 7"
-                    stroke="currentColor"
-                    strokeWidth="2"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  />
-                </svg>
+                {collapsedComposerPrimaryAction.kind === "stop" ? (
+                  <svg
+                    width="12"
+                    height="12"
+                    viewBox="0 0 12 12"
+                    fill="currentColor"
+                    aria-hidden="true"
+                  >
+                    <rect x="2" y="2" width="8" height="8" rx="1.5" />
+                  </svg>
+                ) : (
+                  <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                    <path
+                      d="M8 3L8 13M8 3L4 7M8 3L12 7"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    />
+                  </svg>
+                )}
               </button>
             </div>
           ) : null}

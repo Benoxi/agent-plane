@@ -18,6 +18,30 @@ export function shouldSubmitComposerOnEnter(input: {
   return !input.isMobileViewport && !input.shiftKey;
 }
 
+export function deriveCollapsedComposerPrimaryAction(input: {
+  isRunning: boolean;
+  isSendBusy: boolean;
+  isConnecting: boolean;
+  projectSelectionRequired: boolean;
+  environmentUnavailable: boolean;
+  hasSendableContent: boolean;
+}): { kind: "send" | "stop"; label: string; disabled: boolean } {
+  if (input.isRunning) {
+    return { kind: "stop", label: "Stop generation", disabled: false };
+  }
+
+  return {
+    kind: "send",
+    label: "Send message",
+    disabled:
+      input.isSendBusy ||
+      input.isConnecting ||
+      input.projectSelectionRequired ||
+      input.environmentUnavailable ||
+      !input.hasSendableContent,
+  };
+}
+
 const isInlineTokenSegment = (
   segment:
     | { type: "text"; text: string }
