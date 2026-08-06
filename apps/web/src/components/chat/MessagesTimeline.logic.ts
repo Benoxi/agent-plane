@@ -15,6 +15,7 @@ export const TIMELINE_MINIMAP_MIN_ITEMS = 2;
 export const TIMELINE_MINIMAP_MAX_HEIGHT_CSS = "calc(100vh - 18rem)";
 export const TIMELINE_CONTENT_MAX_WIDTH = 768;
 export const TIMELINE_MINIMAP_PERSISTENT_GUTTER = 48;
+export const TIMELINE_NEAR_END_THRESHOLD = 0.1;
 
 export interface TimelineEndState {
   readonly isAtEnd?: boolean;
@@ -23,6 +24,29 @@ export interface TimelineEndState {
 
 export function resolveTimelineIsAtEnd(state: TimelineEndState | undefined): boolean | undefined {
   return state?.isNearEnd ?? state?.isAtEnd;
+}
+
+export function shouldCancelTimelineLiveFollow(isNearEnd: boolean | undefined): boolean {
+  return isNearEnd === false;
+}
+
+export function isTimelineLiveFollowActive(
+  liveFollowUserScrollGeneration: number | null,
+  userScrollGeneration: number,
+): boolean {
+  return liveFollowUserScrollGeneration === userScrollGeneration;
+}
+
+export function keyboardEventMayNavigateTimelineAwayFromEnd(input: {
+  readonly key: string;
+  readonly shiftKey: boolean;
+}): boolean {
+  return (
+    input.key === "ArrowUp" ||
+    input.key === "PageUp" ||
+    input.key === "Home" ||
+    (input.key === " " && input.shiftKey)
+  );
 }
 
 export function resolveTimelineMinimapHeightStyle(itemCount: number): string {
