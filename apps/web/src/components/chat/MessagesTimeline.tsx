@@ -83,6 +83,7 @@ import {
   type StableMessagesTimelineRowsState,
   type MessagesTimelineRow,
   TIMELINE_MINIMAP_MIN_ITEMS,
+  TIMELINE_NEAR_END_THRESHOLD,
   type TimelineLatestTurn,
 } from "./MessagesTimeline.logic";
 import { TerminalContextInlineChip } from "./TerminalContextInlineChip";
@@ -505,6 +506,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
                     },
                   }
             }
+            maintainScrollAtEndThreshold={TIMELINE_NEAR_END_THRESHOLD}
             maintainVisibleContentPosition={{
               data: true,
               size: false,

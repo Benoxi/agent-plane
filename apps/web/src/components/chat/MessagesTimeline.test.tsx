@@ -32,6 +32,7 @@ vi.mock("@legendapp/list/react", async () => {
             layout?: boolean;
           };
         };
+    maintainScrollAtEndThreshold?: number;
     maintainVisibleContentPosition?:
       | boolean
       | {
@@ -75,6 +76,7 @@ vi.mock("@legendapp/list/react", async () => {
             ? props.maintainScrollAtEnd.on?.layout
             : undefined
         }
+        data-maintain-scroll-at-end-threshold={props.maintainScrollAtEndThreshold}
         data-maintain-visible-content-position={
           typeof props.maintainVisibleContentPosition === "object"
             ? "object"
@@ -274,6 +276,10 @@ describe("MessagesTimeline", () => {
   it("uses LegendList isNearEnd when deciding whether the live edge is visible", async () => {
     const {
       resolveTimelineIsAtEnd,
+      isTimelineLiveFollowActive,
+      keyboardEventMayNavigateTimelineAwayFromEnd,
+      shouldCancelTimelineLiveFollow,
+      TIMELINE_NEAR_END_THRESHOLD,
       resolveTimelineMinimapHasPersistentGutter,
       resolveTimelineMinimapHeightStyle,
       resolveTimelineMinimapHitStripWidth,
@@ -286,6 +292,22 @@ describe("MessagesTimeline", () => {
     expect(resolveTimelineIsAtEnd({ isNearEnd: false, isAtEnd: true })).toBe(false);
     expect(resolveTimelineIsAtEnd({ isAtEnd: true })).toBe(true);
     expect(resolveTimelineIsAtEnd(undefined)).toBeUndefined();
+    expect(TIMELINE_NEAR_END_THRESHOLD).toBe(0.1);
+    expect(shouldCancelTimelineLiveFollow(true)).toBe(false);
+    expect(shouldCancelTimelineLiveFollow(false)).toBe(true);
+    expect(shouldCancelTimelineLiveFollow(undefined)).toBe(false);
+    expect(keyboardEventMayNavigateTimelineAwayFromEnd({ key: "PageUp", shiftKey: false })).toBe(
+      true,
+    );
+    expect(keyboardEventMayNavigateTimelineAwayFromEnd({ key: " ", shiftKey: true })).toBe(true);
+    expect(keyboardEventMayNavigateTimelineAwayFromEnd({ key: "PageDown", shiftKey: false })).toBe(
+      false,
+    );
+
+    for (const update of ["streamed message", "tool output", "pending question"] as const) {
+      expect(isTimelineLiveFollowActive(null, 1), update).toBe(false);
+      expect(isTimelineLiveFollowActive(1, 1), update).toBe(true);
+    }
 
     expect(resolveTimelineMinimapHeightStyle(5)).toBe("min(32px, calc(100vh - 18rem))");
     expect(resolveTimelineMinimapTopPercent(2, 5)).toBe(50);
@@ -396,6 +418,7 @@ describe("MessagesTimeline", () => {
     expect(markup).toContain('data-maintain-scroll-at-end-data-change="true"');
     expect(markup).toContain('data-maintain-scroll-at-end-item-layout="true"');
     expect(markup).toContain('data-maintain-scroll-at-end-layout="true"');
+    expect(markup).toContain('data-maintain-scroll-at-end-threshold="0.1"');
     expect(markup).toContain('data-user-message-collapsed="true"');
     expect(markup).toContain('data-user-message-fade="true"');
     expect(markup).toContain('data-user-message-footer="true"');
