@@ -1746,9 +1746,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     const recognition = createComposerSpeechRecognition({
       language: globalThis.navigator?.language || "en-US",
       onFinalText: (text) => {
-        voiceFinalTextRef.current = [voiceFinalTextRef.current, text]
-          .filter((chunk) => chunk.trim().length > 0)
-          .join(" ");
+        voiceFinalTextRef.current = text;
       },
       onInterimText: () => undefined,
       onError: (message) => {

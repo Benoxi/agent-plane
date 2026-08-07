@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 import {
   collectSpeechRecognitionText,
   createComposerSpeechRecognition,
+  createSpeechRecognitionTranscriptTracker,
   detectSpeechRecognitionSupport,
   speechRecognitionErrorMessage,
 } from "./speechRecognition";
@@ -48,9 +49,10 @@ function makeResult(transcript: string, isFinal: boolean): SpeechRecognitionResu
 
 function makeRecognitionEvent(
   results: ReadonlyArray<SpeechRecognitionResult>,
+  resultIndex = 0,
 ): SpeechRecognitionEvent {
   return {
-    resultIndex: 0,
+    resultIndex,
     results: {
       length: results.length,
       item: (index: number) => results[index]!,
@@ -123,6 +125,48 @@ describe("speechRecognition", () => {
     const text = collectSpeechRecognitionText(makeRecognitionEvent([makeResult("   ", true)]));
 
     expect(text).toEqual({ finalText: "", interimText: "" });
+  });
+
+  it("replaces interim text and does not duplicate replayed final result slots", () => {
+    const tracker = createSpeechRecognitionTranscriptTracker();
+
+    expect(tracker.update(makeRecognitionEvent([makeResult("hello wor", false)]))).toEqual({
+      finalText: "",
+      interimText: "hello wor",
+    });
+    expect(tracker.update(makeRecognitionEvent([makeResult("hello world", true)]))).toEqual({
+      finalText: "hello world",
+      interimText: "",
+    });
+    expect(
+      tracker.update(
+        makeRecognitionEvent(
+          [makeResult("hello world", true), makeResult("from Chrome", false)],
+          1,
+        ),
+      ),
+    ).toEqual({
+      finalText: "hello world",
+      interimText: "from Chrome",
+    });
+    expect(
+      tracker.update(
+        makeRecognitionEvent([makeResult("hello world", true), makeResult("from Chrome", true)], 0),
+      ),
+    ).toEqual({
+      finalText: "hello world from Chrome",
+      interimText: "",
+    });
+  });
+
+  it("retains deliberately repeated words when Chrome reports separate result slots", () => {
+    const tracker = createSpeechRecognitionTranscriptTracker();
+
+    expect(
+      tracker.update(
+        makeRecognitionEvent([makeResult("very", true), makeResult("very useful", true)]),
+      ),
+    ).toEqual({ finalText: "very very useful", interimText: "" });
   });
 
   it("configures and starts a composer recognizer", () => {
