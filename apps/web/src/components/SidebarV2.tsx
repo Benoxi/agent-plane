@@ -180,7 +180,7 @@ function compactSidebarTimeLabel(label: string): string {
 }
 
 function threadTimeLabel(thread: SidebarThreadSummary): string {
-  const timestamp = thread.latestUserMessageAt ?? thread.updatedAt;
+  const timestamp = thread.updatedAt;
   return compactSidebarTimeLabel(formatRelativeTimeLabel(timestamp));
 }
 
@@ -1617,8 +1617,8 @@ export default function SidebarV2() {
         const changeRequestState = changeRequestStateByKey.get(threadKey) ?? null;
         // Snooze outranks everything, including a pin: "hide until Tuesday"
         // temporarily suspends "keep on top". The pin survives underneath —
-        // pinned cards are creation-ordered, so on wake the thread reappears
-        // at its original spot in the pinned block. (For unpinned threads
+        // pinned cards remain in meaningful-activity order, so on wake the
+        // thread reappears according to its latest update. (For unpinned threads
         // this is also the snooze-beats-auto-settle rule: the wake time is a
         // stronger statement about when the thread matters again.)
         if (supportsSnooze && effectiveSnoozed(thread, { now: preciseNow })) {
@@ -1639,8 +1639,8 @@ export default function SidebarV2() {
         }
       }
       return {
-        // Same static creation order as the inbox: a pin freezes prominence,
-        // it does not introduce a new ordering scheme.
+        // Pins keep a thread in the pinned block, while meaningful activity
+        // orders it within that block.
         pinnedThreads: sortThreadsForSidebarV2(pinned),
         activeThreads: sortThreadsForSidebarV2(active),
         // Soonest wake first: "what comes back next" is the shelf's question.
