@@ -1,6 +1,8 @@
 import { memo, type PointerEventHandler, useEffect, useState } from "react";
 import { ChevronDownIcon, ChevronLeftIcon, Clock3Icon } from "lucide-react";
+import { useEnvironmentIdentificationMode } from "~/hooks/useSettings";
 import { cn } from "~/lib/utils";
+import { StageBackdropButtonArt, useSidebarStageBackdropVariant } from "../SidebarStageBackdrop";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
@@ -22,6 +24,7 @@ interface ComposerPrimaryActionsProps {
   showPlanFollowUpPrompt: boolean;
   promptHasText: boolean;
   isSendBusy: boolean;
+  sendDisabledReason: string | null;
   isConnecting: boolean;
   isEnvironmentUnavailable: boolean;
   isPreparingWorktree: boolean;
@@ -63,6 +66,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
   showPlanFollowUpPrompt,
   promptHasText,
   isSendBusy,
+  sendDisabledReason,
   isConnecting,
   isEnvironmentUnavailable,
   isPreparingWorktree,
@@ -85,6 +89,11 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
       setDelaySeconds("30");
     }
   }, [scheduleOpen]);
+  const environmentIdentificationMode = useEnvironmentIdentificationMode();
+  const isSendDisabled = sendDisabledReason !== null;
+  const stageBackdropVariant = useSidebarStageBackdropVariant(
+    environmentIdentificationMode === "artwork",
+  );
 
   if (pendingAction) {
     return (
@@ -161,7 +170,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
           size="sm"
           className={cn("rounded-full", compact ? "h-9 px-3 sm:h-8" : "h-9 px-4 sm:h-8")}
           {...pointerFocusProps}
-          disabled={isSendBusy || isConnecting || isEnvironmentUnavailable}
+          disabled={isSendBusy || isSendDisabled || isConnecting || isEnvironmentUnavailable}
         >
           {isConnecting || isSendBusy ? "Sending..." : "Refine"}
         </Button>
@@ -175,7 +184,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
           size="sm"
           className="h-9 rounded-l-full rounded-r-none px-4 sm:h-8"
           {...pointerFocusProps}
-          disabled={isSendBusy || isConnecting || isEnvironmentUnavailable}
+          disabled={isSendBusy || isSendDisabled || isConnecting || isEnvironmentUnavailable}
         >
           {isConnecting || isSendBusy ? "Sending..." : "Implement"}
         </Button>
@@ -188,7 +197,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
                 className="h-9 rounded-l-none rounded-r-full border-l-white/12 px-2 sm:h-8"
                 aria-label="Implementation actions"
                 {...pointerFocusProps}
-                disabled={isSendBusy || isConnecting || isEnvironmentUnavailable}
+                disabled={isSendBusy || isSendDisabled || isConnecting || isEnvironmentUnavailable}
               />
             }
           >
@@ -196,7 +205,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
           </MenuTrigger>
           <MenuPopup align="end" side="top">
             <MenuItem
-              disabled={isSendBusy || isConnecting || isEnvironmentUnavailable}
+              disabled={isSendBusy || isSendDisabled || isConnecting || isEnvironmentUnavailable}
               onClick={() => void onImplementPlanInNewThread()}
             >
               Implement in a new thread
@@ -282,21 +291,39 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
 
       <button
         type="submit"
-        className="flex h-9 w-9 enabled:cursor-pointer items-center justify-center rounded-full bg-primary/90 text-primary-foreground shadow-xs enabled:shadow-primary/24 enabled:inset-shadow-[0_1px_--theme(--color-white/16%)] transition-all duration-150 hover:bg-primary hover:scale-105 active:inset-shadow-[0_1px_--theme(--color-black/8%)] active:shadow-none disabled:pointer-events-none disabled:opacity-30 disabled:shadow-none disabled:hover:scale-100 sm:h-8 sm:w-8"
+        className={cn(
+          "relative isolate flex h-9 w-9 items-center justify-center overflow-hidden rounded-full text-primary-foreground shadow-xs transition-all duration-150 enabled:cursor-pointer enabled:inset-shadow-[0_1px_--theme(--color-white/16%)] hover:scale-105 active:inset-shadow-[0_1px_--theme(--color-black/8%)] active:shadow-none disabled:pointer-events-none disabled:opacity-30 disabled:shadow-none disabled:hover:scale-100 sm:h-8 sm:w-8",
+          stageBackdropVariant
+            ? "bg-transparent enabled:shadow-black/24 enabled:hover:brightness-110"
+            : "bg-primary/90 enabled:shadow-primary/24 hover:bg-primary",
+        )}
         {...pointerFocusProps}
-        disabled={isSendBusy || isConnecting || isEnvironmentUnavailable || !hasSendableContent}
+        disabled={
+          isSendBusy ||
+          isSendDisabled ||
+          isConnecting ||
+          isEnvironmentUnavailable ||
+          !hasSendableContent
+        }
         aria-label={
           isEnvironmentUnavailable
             ? "Environment disconnected"
-            : isConnecting
-              ? "Connecting"
-              : isPreparingWorktree
-                ? "Preparing worktree"
-                : isSendBusy
-                  ? "Sending"
-                  : "Send message"
+            : sendDisabledReason
+              ? sendDisabledReason
+              : isConnecting
+                ? "Connecting"
+                : isPreparingWorktree
+                  ? "Preparing worktree"
+                  : isSendBusy
+                    ? "Sending"
+                    : "Send message"
         }
       >
+        {stageBackdropVariant ? (
+          <span className="absolute inset-0 -z-10" aria-hidden="true">
+            <StageBackdropButtonArt variant={stageBackdropVariant} />
+          </span>
+        ) : null}
         {isConnecting || isSendBusy ? (
           <Spinner className="size-3.5" aria-hidden="true" />
         ) : (
