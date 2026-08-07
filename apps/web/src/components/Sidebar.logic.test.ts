@@ -978,7 +978,7 @@ describe("getFallbackThreadIdAfterDelete", () => {
   });
 });
 describe("sortProjectsForSidebar", () => {
-  it("sorts projects by the most recent user message across their threads", () => {
+  it("sorts projects by the most recent meaningful update across their threads", () => {
     const projects = [
       makeProject({ id: ProjectId.make("project-1"), title: "Older project" }),
       makeProject({ id: ProjectId.make("project-2"), title: "Newer project" }),
@@ -1020,8 +1020,8 @@ describe("sortProjectsForSidebar", () => {
     const sorted = sortProjectsForSidebar(projects, threads, "updated_at");
 
     expect(sorted.map((project) => project.id)).toEqual([
-      ProjectId.make("project-2"),
       ProjectId.make("project-1"),
+      ProjectId.make("project-2"),
     ]);
   });
 

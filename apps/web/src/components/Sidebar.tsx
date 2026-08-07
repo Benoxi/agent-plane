@@ -229,12 +229,12 @@ import {
 } from "../sidebarProjectGrouping";
 import { SidebarProviderUpdatePill } from "./sidebar/SidebarProviderUpdatePill";
 const SIDEBAR_SORT_LABELS: Record<SidebarProjectSortOrder, string> = {
-  updated_at: "Last user message",
+  updated_at: "Last updated",
   created_at: "Created at",
   manual: "Manual",
 };
 const SIDEBAR_THREAD_SORT_LABELS: Record<SidebarThreadSortOrder, string> = {
-  updated_at: "Last user message",
+  updated_at: "Last updated",
   created_at: "Created at",
 };
 const SIDEBAR_LIST_ANIMATION_OPTIONS = {
