@@ -713,25 +713,46 @@ describe("searchSidebarThreadsByTitle", () => {
 });
 
 describe("sortThreadsForSidebarV2", () => {
-  const sortable = (input: { id: string; createdAt: string }) => ({
+  const sortable = (input: { id: string; createdAt: string; updatedAt?: string }) => ({
     id: input.id,
     createdAt: input.createdAt,
+    updatedAt: input.updatedAt ?? input.createdAt,
   });
 
-  it("orders by creation time, newest first, ignoring activity", () => {
+  it("orders by the latest meaningful update, not creation time", () => {
     const sorted = sortThreadsForSidebarV2([
-      sortable({ id: "oldest", createdAt: "2026-03-09T08:00:00.000Z" }),
-      sortable({ id: "newest", createdAt: "2026-03-09T12:00:00.000Z" }),
+      sortable({
+        id: "updated-after-assistant-output",
+        createdAt: "2026-03-09T08:00:00.000Z",
+        updatedAt: "2026-03-09T13:00:00.000Z",
+      }),
+      sortable({
+        id: "newest-created",
+        createdAt: "2026-03-09T12:00:00.000Z",
+        updatedAt: "2026-03-09T12:00:00.000Z",
+      }),
       sortable({ id: "middle", createdAt: "2026-03-09T10:00:00.000Z" }),
     ]);
 
-    expect(sorted.map((thread) => thread.id)).toEqual(["newest", "middle", "oldest"]);
+    expect(sorted.map((thread) => thread.id)).toEqual([
+      "updated-after-assistant-output",
+      "newest-created",
+      "middle",
+    ]);
   });
 
-  it("breaks creation-time ties by id so the order is stable", () => {
+  it("falls back to creation time and then id so ties are stable", () => {
     const sorted = sortThreadsForSidebarV2([
-      sortable({ id: "b", createdAt: "2026-03-09T10:00:00.000Z" }),
-      sortable({ id: "a", createdAt: "2026-03-09T10:00:00.000Z" }),
+      sortable({
+        id: "b",
+        createdAt: "2026-03-09T10:00:00.000Z",
+        updatedAt: "invalid-date",
+      }),
+      sortable({
+        id: "a",
+        createdAt: "2026-03-09T10:00:00.000Z",
+        updatedAt: "invalid-date",
+      }),
     ]);
 
     expect(sorted.map((thread) => thread.id)).toEqual(["a", "b"]);
@@ -1217,7 +1238,7 @@ describe("getFallbackThreadIdAfterDelete", () => {
   });
 });
 describe("sortProjectsForSidebar", () => {
-  it("sorts projects by the most recent user message across their threads", () => {
+  it("sorts projects by the most recent meaningful update across their threads", () => {
     const projects = [
       makeProject({ id: ProjectId.make("project-1"), title: "Older project" }),
       makeProject({ id: ProjectId.make("project-2"), title: "Newer project" }),
@@ -1259,8 +1280,8 @@ describe("sortProjectsForSidebar", () => {
     const sorted = sortProjectsForSidebar(projects, threads, "updated_at");
 
     expect(sorted.map((project) => project.id)).toEqual([
-      ProjectId.make("project-2"),
       ProjectId.make("project-1"),
+      ProjectId.make("project-2"),
     ]);
   });
 
