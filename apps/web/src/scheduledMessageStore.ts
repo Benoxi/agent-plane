@@ -84,9 +84,8 @@ function sortItems(items: ReadonlyArray<ScheduledMessage>): ScheduledMessage[] {
 
 export function hydrateScheduledMessageState(
   input: ScheduledMessageState,
-  now = new Date(),
+  _now = new Date(),
 ): ScheduledMessageState {
-  const nowMillis = now.getTime();
   const items = sortItems(
     input.items.map((item) => {
       if (item.status === "sending") {
@@ -94,13 +93,6 @@ export function hydrateScheduledMessageState(
           ...item,
           status: "expired" as const,
           lastError: "Sending was interrupted before the app finished dispatching this message.",
-        };
-      }
-      if (item.status === "pending" && Date.parse(item.scheduledFor) <= nowMillis) {
-        return {
-          ...item,
-          status: "expired" as const,
-          lastError: undefined,
         };
       }
       return item;
