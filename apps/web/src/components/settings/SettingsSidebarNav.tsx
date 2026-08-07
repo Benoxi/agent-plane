@@ -46,26 +46,36 @@ export const SETTINGS_NAV_ITEMS: ReadonlyArray<{
 export function SettingsSidebarNav({ pathname }: { pathname: string }) {
   const navigate = useNavigate();
   const canGoBack = useCanGoBack();
-  const { isMobile, setOpenMobile } = useSidebar();
+  const { closeMobileSidebar, isMobile } = useSidebar();
   const handleSectionClick = useCallback(
     (to: SettingsSectionPath) => {
       if (isMobile) {
-        setOpenMobile(false);
+        closeMobileSidebar(() => {
+          void navigate({ to, replace: true });
+        });
+        return;
       }
       void navigate({ to, replace: true });
     },
-    [isMobile, navigate, setOpenMobile],
+    [closeMobileSidebar, isMobile, navigate],
   );
   const handleBackClick = useCallback(() => {
     if (isMobile) {
-      setOpenMobile(false);
+      closeMobileSidebar(() => {
+        if (canGoBack) {
+          window.history.back();
+          return;
+        }
+        void navigate({ to: "/" });
+      });
+      return;
     }
     if (canGoBack) {
       window.history.back();
       return;
     }
     void navigate({ to: "/" });
-  }, [canGoBack, isMobile, navigate, setOpenMobile]);
+  }, [canGoBack, closeMobileSidebar, isMobile, navigate]);
 
   return (
     <>

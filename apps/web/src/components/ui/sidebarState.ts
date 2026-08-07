@@ -1,5 +1,15 @@
 export type ResponsiveSidebarState = "expanded" | "collapsed";
 
+export function resolveMobileSidebarHistoryClose(input: {
+  readonly hasTrackedEntry: boolean;
+  readonly currentEntryIsSidebarSentinel: boolean;
+  readonly closePending?: boolean;
+}): "none" | "clear" | "back" | "wait" {
+  if (input.closePending) return "wait";
+  if (!input.hasTrackedEntry) return "none";
+  return input.currentEntryIsSidebarSentinel ? "back" : "clear";
+}
+
 export const MOBILE_SIDEBAR_SWIPE_MIN_DISTANCE = 72;
 export const MOBILE_SIDEBAR_SWIPE_MAX_CROSS_AXIS_DISTANCE = 48;
 export const MOBILE_SIDEBAR_SWIPE_DIRECTION_RATIO = 1.5;

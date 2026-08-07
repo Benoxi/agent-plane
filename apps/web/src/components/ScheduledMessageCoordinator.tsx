@@ -18,7 +18,10 @@ import { readThreadShell } from "../state/entities";
 import { threadEnvironment } from "../state/threads";
 import { useAtomCommand } from "../state/use-atom-command";
 import { createStartedThreadTextTurnInput } from "../threadSendExecution";
-import { canDispatchScheduledMessageToPhase } from "../scheduledMessageDispatch";
+import {
+  canDispatchScheduledMessageToPhase,
+  shouldRetryFailedScheduledDispatch,
+} from "../scheduledMessageDispatch";
 
 export function ScheduledMessageCoordinator() {
   const scheduledMessages = useScheduledMessages();
@@ -34,6 +37,8 @@ export function ScheduledMessageCoordinator() {
       ),
     [environments],
   );
+  const environmentConnectionByIdRef = useRef(environmentConnectionById);
+  environmentConnectionByIdRef.current = environmentConnectionById;
 
   useEffect(() => {
     const pendingItems = scheduledMessages.filter((item) => item.status === "pending");
@@ -123,12 +128,17 @@ export function ScheduledMessageCoordinator() {
           continue;
         }
 
-        const latestConnection = environmentConnectionById.get(item.environmentId);
+        const latestConnection = environmentConnectionByIdRef.current.get(item.environmentId);
         const latestThread = readThreadShell(threadRef);
         const latestPhase = latestThread
           ? derivePhase(latestThread.session ?? null)
           : "disconnected";
-        if (latestConnection?.phase !== "connected" || latestPhase !== "ready") {
+        if (
+          shouldRetryFailedScheduledDispatch({
+            connectionPhase: latestConnection?.phase ?? null,
+            sessionPhase: latestPhase,
+          })
+        ) {
           markScheduledMessagePending(item.id);
           continue;
         }
