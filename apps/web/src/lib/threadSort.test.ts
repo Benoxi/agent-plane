@@ -40,12 +40,12 @@ function makeThread(overrides: Partial<Thread> = {}): Thread {
 }
 
 describe("sortThreads", () => {
-  it("sorts threads by the latest user message in recency mode", () => {
+  it("sorts threads by their latest meaningful update in recency mode", () => {
     const sorted = sortThreads(
       [
         makeThread({
           id: ThreadId.make("thread-1"),
-          updatedAt: "2026-03-09T10:10:00.000Z",
+          updatedAt: "2026-03-09T10:20:00.000Z",
           messages: [
             {
               id: "message-1" as never,
@@ -79,8 +79,8 @@ describe("sortThreads", () => {
     );
 
     expect(sorted.map((thread) => thread.id)).toEqual([
-      ThreadId.make("thread-2"),
       ThreadId.make("thread-1"),
+      ThreadId.make("thread-2"),
     ]);
   });
 

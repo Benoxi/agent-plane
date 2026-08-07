@@ -6,11 +6,6 @@ import * as Order from "effect/Order";
 export interface ThreadSortInput {
   readonly createdAt: string;
   readonly updatedAt: string;
-  readonly latestUserMessageAt?: string | null;
-  readonly messages?: ReadonlyArray<{
-    readonly createdAt: string;
-    readonly role: string;
-  }>;
 }
 
 export function toSortableTimestamp(iso: string | undefined): number | null {
@@ -30,33 +25,6 @@ function getFirstSortableTimestamp(...values: Array<string | null | undefined>):
   return null;
 }
 
-function getLatestUserMessageTimestamp(thread: ThreadSortInput): number {
-  if (thread.latestUserMessageAt) {
-    const latestUserMessageTimestamp = toSortableTimestamp(thread.latestUserMessageAt);
-    if (latestUserMessageTimestamp !== null) {
-      return latestUserMessageTimestamp;
-    }
-  }
-
-  let latestUserMessageTimestamp: number | null = null;
-
-  for (const message of thread.messages ?? []) {
-    if (message.role !== "user") continue;
-    const messageTimestamp = toSortableTimestamp(message.createdAt);
-    if (messageTimestamp === null) continue;
-    latestUserMessageTimestamp =
-      latestUserMessageTimestamp === null
-        ? messageTimestamp
-        : Math.max(latestUserMessageTimestamp, messageTimestamp);
-  }
-
-  if (latestUserMessageTimestamp !== null) {
-    return latestUserMessageTimestamp;
-  }
-
-  return getFirstSortableTimestamp(thread.updatedAt, thread.createdAt) ?? Number.NEGATIVE_INFINITY;
-}
-
 export function getThreadSortTimestamp(
   thread: ThreadSortInput,
   sortOrder: SidebarThreadSortOrder | Exclude<SidebarProjectSortOrder, "manual">,
@@ -66,7 +34,7 @@ export function getThreadSortTimestamp(
       getFirstSortableTimestamp(thread.createdAt, thread.updatedAt) ?? Number.NEGATIVE_INFINITY
     );
   }
-  return getLatestUserMessageTimestamp(thread);
+  return getFirstSortableTimestamp(thread.updatedAt, thread.createdAt) ?? Number.NEGATIVE_INFINITY;
 }
 
 export function sortThreads<T extends { readonly id: string } & ThreadSortInput>(
@@ -78,10 +46,13 @@ export function sortThreads<T extends { readonly id: string } & ThreadSortInput>
     Order.mapInput(
       Order.Struct({
         timestamp: Order.flip(Order.Number),
+        createdAt: Order.flip(Order.Number),
         id: Order.flip(Order.String),
       }),
       (thread: T) => ({
         timestamp: getThreadSortTimestamp(thread, sortOrder),
+        createdAt:
+          getFirstSortableTimestamp(thread.createdAt, thread.updatedAt) ?? Number.NEGATIVE_INFINITY,
         id: thread.id,
       }),
     ),
