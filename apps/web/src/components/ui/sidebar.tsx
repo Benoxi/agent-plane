@@ -20,6 +20,7 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { useIsMobile } from "~/hooks/useMediaQuery";
 import { getLocalStorageItem, setLocalStorageItem } from "~/hooks/useLocalStorage";
 import {
+  resolveMobileSidebarHistoryClose,
   resolveSidebarState,
   shouldDismissMobileSidebarFromSwipe,
   type ResponsiveSidebarState,
@@ -40,6 +41,7 @@ type SidebarContextProps = {
   setOpen: (open: boolean) => void;
   openMobile: boolean;
   setOpenMobile: (open: boolean) => void;
+  closeMobileSidebar: (afterClose?: () => void) => void;
   isMobile: boolean;
   toggleSidebar: () => void;
 };
@@ -113,13 +115,19 @@ function SidebarProvider({
   const [openMobile, setOpenMobile] = React.useState(false);
   const mobileHistoryEntryRef = React.useRef(false);
   const mobileSidebarClosedByHistoryRef = React.useRef(false);
+  const mobileSidebarAfterHistoryCloseRef = React.useRef<(() => void) | null>(null);
+  const mobileSidebarHistoryClosePendingRef = React.useRef(false);
 
   React.useEffect(() => {
     const onPopState = () => {
       if (!mobileHistoryEntryRef.current) return;
       mobileHistoryEntryRef.current = false;
+      mobileSidebarHistoryClosePendingRef.current = false;
       mobileSidebarClosedByHistoryRef.current = true;
       setOpenMobile(false);
+      const afterClose = mobileSidebarAfterHistoryCloseRef.current;
+      mobileSidebarAfterHistoryCloseRef.current = null;
+      afterClose?.();
     };
     window.addEventListener("popstate", onPopState);
     return () => window.removeEventListener("popstate", onPopState);
@@ -131,13 +139,17 @@ function SidebarProvider({
         mobileSidebarClosedByHistoryRef.current = false;
         return;
       }
-      if (
-        mobileHistoryEntryRef.current &&
-        typeof window.history.state === "object" &&
-        window.history.state?.[MOBILE_SIDEBAR_HISTORY_STATE_KEY] === true
-      ) {
+      const historyCloseAction = resolveMobileSidebarHistoryClose({
+        hasTrackedEntry: mobileHistoryEntryRef.current,
+        currentEntryIsSidebarSentinel:
+          typeof window.history.state === "object" &&
+          window.history.state?.[MOBILE_SIDEBAR_HISTORY_STATE_KEY] === true,
+      });
+      if (historyCloseAction !== "none") {
         mobileHistoryEntryRef.current = false;
-        window.history.back();
+        if (historyCloseAction === "back") {
+          window.history.back();
+        }
       }
       return;
     }
@@ -154,6 +166,35 @@ function SidebarProvider({
     );
     mobileHistoryEntryRef.current = true;
   }, [isMobile, openMobile]);
+
+  const closeMobileSidebar = React.useCallback(
+    (afterClose?: () => void) => {
+      if (!isMobile) {
+        afterClose?.();
+        return;
+      }
+      const historyCloseAction = resolveMobileSidebarHistoryClose({
+        closePending: mobileSidebarHistoryClosePendingRef.current,
+        hasTrackedEntry: mobileHistoryEntryRef.current,
+        currentEntryIsSidebarSentinel:
+          typeof window.history.state === "object" &&
+          window.history.state?.[MOBILE_SIDEBAR_HISTORY_STATE_KEY] === true,
+      });
+      if (historyCloseAction === "wait") return;
+      if (historyCloseAction === "back") {
+        mobileSidebarHistoryClosePendingRef.current = true;
+        mobileSidebarAfterHistoryCloseRef.current = afterClose ?? null;
+        window.history.back();
+        return;
+      }
+      if (historyCloseAction === "clear") {
+        mobileHistoryEntryRef.current = false;
+      }
+      setOpenMobile(false);
+      afterClose?.();
+    },
+    [isMobile],
+  );
 
   // This is the internal state of the sidebar.
   // We use openProp and setOpenProp for control from outside the component.
@@ -191,6 +232,7 @@ function SidebarProvider({
   const contextValue = React.useMemo<SidebarContextProps>(
     () => ({
       isMobile,
+      closeMobileSidebar,
       open,
       openMobile,
       setOpen,
@@ -198,7 +240,7 @@ function SidebarProvider({
       state,
       toggleSidebar,
     }),
-    [state, open, setOpen, isMobile, openMobile, toggleSidebar],
+    [state, open, setOpen, isMobile, openMobile, closeMobileSidebar, toggleSidebar],
   );
 
   return (

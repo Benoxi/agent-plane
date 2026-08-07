@@ -10,6 +10,7 @@ import {
 } from "./sidebar";
 import {
   MOBILE_SIDEBAR_SWIPE_MIN_DISTANCE,
+  resolveMobileSidebarHistoryClose,
   resolveSidebarState,
   shouldDismissMobileSidebarFromSwipe,
 } from "./sidebarState";
@@ -83,6 +84,28 @@ describe("sidebar interactive cursors", () => {
         endY: 110,
       }),
     ).toBe(true);
+  });
+
+  it("does not retain a stale open marker after route navigation closes the sidebar", () => {
+    expect(
+      resolveMobileSidebarHistoryClose({
+        hasTrackedEntry: true,
+        currentEntryIsSidebarSentinel: false,
+      }),
+    ).toBe("clear");
+    expect(
+      resolveMobileSidebarHistoryClose({
+        hasTrackedEntry: true,
+        currentEntryIsSidebarSentinel: true,
+      }),
+    ).toBe("back");
+    expect(
+      resolveMobileSidebarHistoryClose({
+        hasTrackedEntry: true,
+        currentEntryIsSidebarSentinel: true,
+        closePending: true,
+      }),
+    ).toBe("wait");
   });
 
   it("exposes collapsed state for shared titlebar inset styling", () => {

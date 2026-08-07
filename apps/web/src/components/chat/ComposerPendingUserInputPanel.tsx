@@ -8,6 +8,15 @@ import {
 import { CheckIcon, ChevronDownIcon, ChevronUpIcon, XIcon } from "lucide-react";
 import { cn } from "~/lib/utils";
 
+export function pendingQuestionKeyboardShortcutsEnabled(input: {
+  readonly hasActiveQuestion: boolean;
+  readonly isCollapsed: boolean;
+  readonly isMinimized: boolean;
+  readonly isResponding: boolean;
+}): boolean {
+  return input.hasActiveQuestion && !input.isCollapsed && !input.isMinimized && !input.isResponding;
+}
+
 interface PendingUserInputPanelProps {
   pendingUserInputs: PendingUserInput[];
   respondingRequestIds: ApprovalRequestId[];
@@ -122,7 +131,17 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
   // outside editable fields. Multi-select prompts toggle options in place; single-
   // select prompts keep the existing auto-advance behavior.
   useEffect(() => {
-    if (!activeQuestion || isCollapsed || isResponding) return;
+    if (
+      !pendingQuestionKeyboardShortcutsEnabled({
+        hasActiveQuestion: Boolean(activeQuestion),
+        isCollapsed,
+        isMinimized,
+        isResponding,
+      }) ||
+      !activeQuestion
+    ) {
+      return;
+    }
     const handler = (event: globalThis.KeyboardEvent) => {
       if (event.metaKey || event.ctrlKey || event.altKey) return;
       const target = event.target;
@@ -146,7 +165,16 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
     };
     document.addEventListener("keydown", handler);
     return () => document.removeEventListener("keydown", handler);
-  }, [activeQuestion, isCollapsed, isResponding]);
+  }, [activeQuestion, isCollapsed, isMinimized, isResponding]);
+
+  const handleMinimize = () => {
+    if (autoAdvanceTimerRef.current !== null) {
+      window.clearTimeout(autoAdvanceTimerRef.current);
+      autoAdvanceTimerRef.current = null;
+    }
+    setOptimisticSingleSelect(null);
+    setIsMinimized(true);
+  };
 
   if (!activeQuestion) {
     return null;
@@ -195,7 +223,7 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
             isCollapsed ? "Expand pending agent question" : "Collapse pending agent question"
           }
           onClick={() => setIsCollapsed((current) => !current)}
-          className="flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground/70 transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary/50"
+          className="flex size-10 shrink-0 items-center justify-center rounded-md text-muted-foreground/70 transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary/50"
         >
           {isCollapsed ? (
             <ChevronDownIcon aria-hidden="true" className="size-4" />
@@ -205,8 +233,8 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
         </button>
         <button
           aria-label="Minimize pending agent question to banner"
-          className="flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground/70 transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary/50"
-          onClick={() => setIsMinimized(true)}
+          className="flex size-10 shrink-0 items-center justify-center rounded-md text-muted-foreground/70 transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary/50"
+          onClick={handleMinimize}
           title="Minimize; the agent will keep waiting"
           type="button"
         >

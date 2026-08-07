@@ -2,7 +2,10 @@ import { ApprovalRequestId } from "@t3tools/contracts";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vite-plus/test";
 
-import { ComposerPendingUserInputPanel } from "./ComposerPendingUserInputPanel";
+import {
+  ComposerPendingUserInputPanel,
+  pendingQuestionKeyboardShortcutsEnabled,
+} from "./ComposerPendingUserInputPanel";
 
 const pendingQuestion = {
   requestId: ApprovalRequestId.make("request-1"),
@@ -34,5 +37,17 @@ describe("ComposerPendingUserInputPanel", () => {
     expect(markup).toContain('aria-label="Collapse pending agent question"');
     expect(markup).toContain('aria-label="Minimize pending agent question to banner"');
     expect(markup).toContain("the agent will keep waiting");
+    expect(markup.match(/size-10/g)).toHaveLength(2);
+  });
+
+  it("disables numeric answer shortcuts while the question is minimized", () => {
+    expect(
+      pendingQuestionKeyboardShortcutsEnabled({
+        hasActiveQuestion: true,
+        isCollapsed: false,
+        isMinimized: true,
+        isResponding: false,
+      }),
+    ).toBe(false);
   });
 });
