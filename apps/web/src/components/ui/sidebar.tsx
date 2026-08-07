@@ -19,7 +19,11 @@ import { Skeleton } from "~/components/ui/skeleton";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { useIsMobile } from "~/hooks/useMediaQuery";
 import { getLocalStorageItem, setLocalStorageItem } from "~/hooks/useLocalStorage";
-import { resolveSidebarState, type ResponsiveSidebarState } from "./sidebarState";
+import {
+  resolveSidebarState,
+  shouldDismissMobileSidebarFromSwipe,
+  type ResponsiveSidebarState,
+} from "./sidebarState";
 import * as Schema from "effect/Schema";
 
 const SIDEBAR_COOKIE_NAME = "sidebar_state";
@@ -28,6 +32,7 @@ const SIDEBAR_WIDTH = "16rem";
 const SIDEBAR_WIDTH_MOBILE = "calc(100vw - var(--spacing(3)))";
 const SIDEBAR_WIDTH_ICON = "3rem";
 const SIDEBAR_RESIZE_DEFAULT_MIN_WIDTH = 16 * 16;
+const MOBILE_SIDEBAR_HISTORY_STATE_KEY = "__t3MobileSidebarOpen";
 
 type SidebarContextProps = {
   state: ResponsiveSidebarState;
@@ -106,6 +111,49 @@ function SidebarProvider({
 }) {
   const isMobile = useIsMobile();
   const [openMobile, setOpenMobile] = React.useState(false);
+  const mobileHistoryEntryRef = React.useRef(false);
+  const mobileSidebarClosedByHistoryRef = React.useRef(false);
+
+  React.useEffect(() => {
+    const onPopState = () => {
+      if (!mobileHistoryEntryRef.current) return;
+      mobileHistoryEntryRef.current = false;
+      mobileSidebarClosedByHistoryRef.current = true;
+      setOpenMobile(false);
+    };
+    window.addEventListener("popstate", onPopState);
+    return () => window.removeEventListener("popstate", onPopState);
+  }, []);
+
+  React.useEffect(() => {
+    if (!isMobile || !openMobile) {
+      if (mobileSidebarClosedByHistoryRef.current) {
+        mobileSidebarClosedByHistoryRef.current = false;
+        return;
+      }
+      if (
+        mobileHistoryEntryRef.current &&
+        typeof window.history.state === "object" &&
+        window.history.state?.[MOBILE_SIDEBAR_HISTORY_STATE_KEY] === true
+      ) {
+        mobileHistoryEntryRef.current = false;
+        window.history.back();
+      }
+      return;
+    }
+    if (mobileHistoryEntryRef.current) return;
+
+    const currentState =
+      typeof window.history.state === "object" && window.history.state !== null
+        ? window.history.state
+        : {};
+    window.history.pushState(
+      { ...currentState, [MOBILE_SIDEBAR_HISTORY_STATE_KEY]: true },
+      "",
+      window.location.href,
+    );
+    mobileHistoryEntryRef.current = true;
+  }, [isMobile, openMobile]);
 
   // This is the internal state of the sidebar.
   // We use openProp and setOpenProp for control from outside the component.
@@ -192,6 +240,7 @@ function Sidebar({
   resizable?: boolean | SidebarResizableOptions;
 }) {
   const { isMobile, state, openMobile, setOpenMobile } = useSidebar();
+  const mobileSwipeStartRef = React.useRef<{ x: number; y: number } | null>(null);
   const resolvedResizable = React.useMemo<SidebarResolvedResizableOptions | null>(() => {
     if (isMobile || collapsible === "none" || !resizable) {
       return null;
@@ -209,6 +258,36 @@ function Sidebar({
   const instanceContextValue = React.useMemo<SidebarInstanceContextProps>(
     () => ({ side, resizable: resolvedResizable }),
     [resolvedResizable, side],
+  );
+  const onMobileTouchStart = React.useCallback((event: React.TouchEvent<HTMLDivElement>) => {
+    if (event.touches.length !== 1) {
+      mobileSwipeStartRef.current = null;
+      return;
+    }
+    const touch = event.touches[0];
+    if (!touch) return;
+    mobileSwipeStartRef.current = { x: touch.clientX, y: touch.clientY };
+  }, []);
+  const onMobileTouchEnd = React.useCallback(
+    (event: React.TouchEvent<HTMLDivElement>) => {
+      const start = mobileSwipeStartRef.current;
+      mobileSwipeStartRef.current = null;
+      const touch = event.changedTouches[0];
+      if (
+        start &&
+        touch &&
+        shouldDismissMobileSidebarFromSwipe({
+          side,
+          startX: start.x,
+          startY: start.y,
+          endX: touch.clientX,
+          endY: touch.clientY,
+        })
+      ) {
+        setOpenMobile(false);
+      }
+    },
+    [setOpenMobile, side],
   );
 
   if (collapsible === "none") {
@@ -257,6 +336,12 @@ function Sidebar({
                 "flex h-full w-full flex-col pb-safe pt-safe",
                 side === "left" ? "pl-safe" : "pr-safe",
               )}
+              data-sidebar-swipe-dismiss="true"
+              onTouchCancel={() => {
+                mobileSwipeStartRef.current = null;
+              }}
+              onTouchEnd={onMobileTouchEnd}
+              onTouchStart={onMobileTouchStart}
             >
               {children}
             </div>
