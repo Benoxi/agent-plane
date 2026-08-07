@@ -18,6 +18,7 @@ import { readThreadShell } from "../state/entities";
 import { threadEnvironment } from "../state/threads";
 import { useAtomCommand } from "../state/use-atom-command";
 import { createStartedThreadTextTurnInput } from "../threadSendExecution";
+import { canDispatchScheduledMessageToPhase } from "../scheduledMessageDispatch";
 
 export function ScheduledMessageCoordinator() {
   const scheduledMessages = useScheduledMessages();
@@ -89,7 +90,8 @@ export function ScheduledMessageCoordinator() {
         }
 
         const thread = readThreadShell(threadRef);
-        if (!thread || derivePhase(thread.session ?? null) !== "ready") {
+        const phase = thread ? derivePhase(thread.session ?? null) : "disconnected";
+        if (!thread || !canDispatchScheduledMessageToPhase(phase)) {
           continue;
         }
 
