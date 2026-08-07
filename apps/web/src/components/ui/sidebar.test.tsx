@@ -8,7 +8,11 @@ import {
   SidebarProvider,
   SidebarTrigger,
 } from "./sidebar";
-import { resolveSidebarState } from "./sidebarState";
+import {
+  MOBILE_SIDEBAR_SWIPE_MIN_DISTANCE,
+  resolveSidebarState,
+  shouldDismissMobileSidebarFromSwipe,
+} from "./sidebarState";
 
 function renderSidebarButton(className?: string) {
   return renderToStaticMarkup(
@@ -27,6 +31,58 @@ describe("sidebar interactive cursors", () => {
     expect(resolveSidebarState({ isMobile: false, open: true, openMobile: false })).toBe(
       "expanded",
     );
+  });
+
+  it("dismisses only a deliberate horizontal swipe toward the closed edge", () => {
+    expect(MOBILE_SIDEBAR_SWIPE_MIN_DISTANCE).toBe(72);
+    expect(
+      shouldDismissMobileSidebarFromSwipe({
+        side: "left",
+        startX: 260,
+        startY: 100,
+        endX: 160,
+        endY: 118,
+      }),
+    ).toBe(true);
+    expect(
+      shouldDismissMobileSidebarFromSwipe({
+        side: "left",
+        startX: 260,
+        startY: 100,
+        endX: 210,
+        endY: 104,
+      }),
+    ).toBe(false);
+    expect(
+      shouldDismissMobileSidebarFromSwipe({
+        side: "left",
+        startX: 260,
+        startY: 100,
+        endX: 180,
+        endY: 180,
+      }),
+    ).toBe(false);
+    expect(
+      shouldDismissMobileSidebarFromSwipe({
+        side: "left",
+        startX: 160,
+        startY: 100,
+        endX: 260,
+        endY: 100,
+      }),
+    ).toBe(false);
+  });
+
+  it("mirrors the dismiss direction for a right-side mobile sidebar", () => {
+    expect(
+      shouldDismissMobileSidebarFromSwipe({
+        side: "right",
+        startX: 120,
+        startY: 100,
+        endX: 220,
+        endY: 110,
+      }),
+    ).toBe(true);
   });
 
   it("exposes collapsed state for shared titlebar inset styling", () => {
