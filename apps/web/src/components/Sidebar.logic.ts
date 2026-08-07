@@ -480,15 +480,16 @@ export function firstValidTimestamp(
   return null;
 }
 
-// v2 sort: static creation order, newest thread on top. Activity NEVER
-// reorders the list — a row holds its position from open until settled, so
-// the screen only moves at lifecycle transitions. Status (including pending
-// approval) is carried by each card's edge strip, not by position.
+// Keep active threads in meaningful-activity order so assistant output,
+// status changes, and title updates return a thread to the top. Status
+// (including pending approval) is still carried by each card's edge strip.
 export function sortThreadsForSidebarV2<
-  T extends { readonly id: string; readonly createdAt: string },
+  T extends { readonly id: string; readonly createdAt: string; readonly updatedAt: string },
 >(threads: readonly T[]): T[] {
   return [...threads].toSorted(
     (left, right) =>
+      firstValidTimestampMs(right.updatedAt, right.createdAt) -
+        firstValidTimestampMs(left.updatedAt, left.createdAt) ||
       parseTimestampMs(right.createdAt) - parseTimestampMs(left.createdAt) ||
       left.id.localeCompare(right.id),
   );
