@@ -5148,6 +5148,7 @@ function ChatViewContent(props: ChatViewProps) {
       }
 
       const composerImagesSnapshot = [...composerImages];
+      const composerTerminalContextIdsSnapshot = composerTerminalContexts.map((item) => item.id);
       const composerTerminalContextsSnapshot = [...sendableComposerTerminalContexts];
       const composerElementContextsSnapshot = [...composerElementContexts];
       const composerPreviewAnnotationsSnapshot = [...composerPreviewAnnotations];
@@ -5261,7 +5262,7 @@ function ChatViewContent(props: ChatViewProps) {
           currentPrompt: promptRef.current,
           snapshotItemIds: [
             composerImagesSnapshot.map((item) => item.id),
-            composerTerminalContextsSnapshot.map((item) => item.id),
+            composerTerminalContextIdsSnapshot,
             composerElementContextsSnapshot.map((item) => item.id),
             composerPreviewAnnotationsSnapshot.map((item) => item.id),
             composerReviewCommentsSnapshot.map((item) => item.id),
