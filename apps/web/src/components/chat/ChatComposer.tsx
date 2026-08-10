@@ -2536,6 +2536,13 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           modelPickerOpen: isComposerModelPickerOpen,
         },
       });
+      if (command === "composer.insertFencedCodeBlock") {
+        if (composerEditorRef.current?.insertFencedCodeBlock()) {
+          event.preventDefault();
+          event.stopPropagation();
+        }
+        return;
+      }
       if (command !== "composer.stash") return;
       // Always claim the shortcut so the browser save dialog never opens,
       // even when the composer is in a state that can't stash.

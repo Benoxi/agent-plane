@@ -129,6 +129,11 @@ const DEFAULT_BINDINGS = compile([
     whenAst: whenNot(whenIdentifier("terminalFocus")),
   },
   {
+    shortcut: modShortcut("c", { altKey: true }),
+    command: "composer.insertFencedCodeBlock",
+    whenAst: whenNot(whenIdentifier("terminalFocus")),
+  },
+  {
     shortcut: modShortcut("m", { shiftKey: true }),
     command: "modelPicker.toggle",
     whenAst: whenNot(whenIdentifier("terminalFocus")),
@@ -476,6 +481,39 @@ describe("model picker navigation helpers", () => {
 });
 
 describe("chat/editor shortcuts", () => {
+  it("matches fenced-code insertion outside terminal focus", () => {
+    assert.strictEqual(
+      resolveShortcutCommand(event({ key: "c", metaKey: true, altKey: true }), DEFAULT_BINDINGS, {
+        platform: "MacIntel",
+        context: { terminalFocus: false },
+      }),
+      "composer.insertFencedCodeBlock",
+    );
+    assert.notStrictEqual(
+      resolveShortcutCommand(event({ key: "c", ctrlKey: true, altKey: true }), DEFAULT_BINDINGS, {
+        platform: "Linux",
+        context: { terminalFocus: true },
+      }),
+      "composer.insertFencedCodeBlock",
+    );
+  });
+
+  it("lets a later conflicting custom shortcut shadow fenced-code insertion", () => {
+    const bindings = compile([
+      {
+        shortcut: modShortcut("c", { altKey: true }),
+        command: "composer.insertFencedCodeBlock",
+      },
+      { shortcut: modShortcut("c", { altKey: true }), command: "chat.new" },
+    ]);
+    assert.strictEqual(
+      resolveShortcutCommand(event({ key: "c", ctrlKey: true, altKey: true }), bindings, {
+        platform: "Linux",
+      }),
+      "chat.new",
+    );
+  });
+
   it("matches chat.new shortcut", () => {
     assert.isTrue(
       isChatNewShortcut(event({ key: "o", metaKey: true, shiftKey: true }), DEFAULT_BINDINGS, {
