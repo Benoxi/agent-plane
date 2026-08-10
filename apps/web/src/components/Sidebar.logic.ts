@@ -754,7 +754,10 @@ export function getProjectSortTimestamp(
   if (sortOrder === "created_at") {
     return toSortableTimestamp(project.createdAt) ?? Number.NEGATIVE_INFINITY;
   }
-  return toSortableTimestamp(project.updatedAt ?? project.createdAt) ?? Number.NEGATIVE_INFINITY;
+  // Project metadata updates (for example, renaming) are not user activity.
+  // Empty projects therefore retain their creation-time position until a user
+  // creates activity in one of their threads.
+  return toSortableTimestamp(project.createdAt) ?? Number.NEGATIVE_INFINITY;
 }
 
 function sortProjectsByActivity<TProject extends SidebarProject>(
@@ -795,7 +798,7 @@ export function sortProjectsForSidebar<
     projects,
     sortOrder,
     (project) => threadsByProjectId.get(project.id) ?? [],
-    (left, right) => left.title.localeCompare(right.title) || left.id.localeCompare(right.id),
+    (left, right) => left.id.localeCompare(right.id),
   );
 }
 
@@ -832,8 +835,7 @@ export function sortLogicalProjectsForSidebar<
     projects,
     sortOrder,
     (project) => threadsByProjectKey.get(project.projectKey) ?? [],
-    (left, right) =>
-      left.title.localeCompare(right.title) || left.projectKey.localeCompare(right.projectKey),
+    (left, right) => left.projectKey.localeCompare(right.projectKey),
   );
 }
 
@@ -868,8 +870,6 @@ export function sortScopedProjectsForSidebar<
     sortOrder,
     (project) => threadsByProject.get(scopedKey(project.environmentId, project.id)) ?? [],
     (left, right) =>
-      left.title.localeCompare(right.title) ||
-      left.environmentId.localeCompare(right.environmentId) ||
-      left.id.localeCompare(right.id),
+      left.environmentId.localeCompare(right.environmentId) || left.id.localeCompare(right.id),
   );
 }

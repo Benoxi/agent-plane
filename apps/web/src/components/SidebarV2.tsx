@@ -1310,6 +1310,27 @@ export default function SidebarV2() {
     () => sortLogicalProjectsForSidebar(unsortedProjectGroups, threads, sidebarProjectSortOrder),
     [sidebarProjectSortOrder, threads, unsortedProjectGroups],
   );
+  const projectScopeOrderSnapshotRef = useRef<readonly string[]>([]);
+  const displayedProjectGroups = useMemo(
+    () =>
+      projectScopeMenuOpen
+        ? orderItemsByPreferredIds({
+            items: projectGroups,
+            preferredIds: projectScopeOrderSnapshotRef.current,
+            getId: (project) => project.projectKey,
+          })
+        : projectGroups,
+    [projectGroups, projectScopeMenuOpen],
+  );
+  const handleProjectScopeMenuOpenChange = useCallback(
+    (open: boolean) => {
+      if (open) {
+        projectScopeOrderSnapshotRef.current = projectGroups.map((project) => project.projectKey);
+      }
+      setProjectScopeMenuOpen(open);
+    },
+    [projectGroups],
+  );
   const serverProviders = useAtomValue(primaryServerProvidersAtom);
   const providerEntryByInstanceId = useMemo(
     () =>
@@ -2747,7 +2768,7 @@ export default function SidebarV2() {
             </div>
             {projectGroups.length > 0 ? (
               <div className="flex items-center gap-1">
-                <Menu open={projectScopeMenuOpen} onOpenChange={setProjectScopeMenuOpen}>
+                <Menu open={projectScopeMenuOpen} onOpenChange={handleProjectScopeMenuOpenChange}>
                   <MenuTrigger
                     render={
                       <SidebarMenuButton
@@ -2785,7 +2806,7 @@ export default function SidebarV2() {
                         <FolderIcon className="size-4 shrink-0" />
                         <span className="min-w-0 truncate text-sm">All projects</span>
                       </MenuRadioItem>
-                      {projectGroups.map((project) => {
+                      {displayedProjectGroups.map((project) => {
                         const scopeKey = project.projectKey;
                         return (
                           <MenuRadioItem
