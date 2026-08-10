@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 import {
   ClipboardApiUnavailableError,
   ClipboardWriteError,
+  verifyClipboardWriteBestEffort,
   writeTextToClipboard,
 } from "./useCopyToClipboard";
 
@@ -54,5 +55,37 @@ describe("writeTextToClipboard", () => {
 
     await expect(writeTextToClipboard("", "plan")).resolves.toBe(false);
     expect(writeText).not.toHaveBeenCalled();
+  });
+
+  it("does not request clipboard reads when the API is unsupported", async () => {
+    const query = vi.fn();
+    vi.stubGlobal("document", { hasFocus: () => true });
+    vi.stubGlobal("navigator", { clipboard: {}, permissions: { query } });
+
+    await expect(verifyClipboardWriteBestEffort("private text")).resolves.toBe("unavailable");
+    expect(query).not.toHaveBeenCalled();
+  });
+
+  it("only verifies clipboard contents after read permission is already granted", async () => {
+    const readText = vi.fn().mockResolvedValue("expected");
+    const query = vi.fn().mockResolvedValue({ state: "granted" });
+    vi.stubGlobal("document", { hasFocus: () => true });
+    vi.stubGlobal("navigator", { clipboard: { readText }, permissions: { query } });
+
+    await expect(verifyClipboardWriteBestEffort("expected")).resolves.toBe("matched");
+    expect(readText).toHaveBeenCalledOnce();
+  });
+
+  it("treats a permitted readback mismatch as inconclusive after a successful write", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    const readText = vi.fn().mockResolvedValue("newer clipboard value");
+    vi.stubGlobal("window", {});
+    vi.stubGlobal("document", { hasFocus: () => true });
+    vi.stubGlobal("navigator", {
+      clipboard: { writeText, readText },
+      permissions: { query: vi.fn().mockResolvedValue({ state: "granted" }) },
+    });
+
+    await expect(writeTextToClipboard("copied value", "message")).resolves.toBe(true);
   });
 });
