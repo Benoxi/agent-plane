@@ -37,7 +37,11 @@ import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { ProviderAdapterProcessError, ProviderAdapterValidationError } from "../Errors.ts";
 import type { ClaudeAdapterShape } from "../Services/ClaudeAdapter.ts";
-import { makeClaudeAdapter, type ClaudeAdapterLiveOptions } from "./ClaudeAdapter.ts";
+import {
+  makeClaudeAdapter,
+  toClaudeSdkUserInputAnswers,
+  type ClaudeAdapterLiveOptions,
+} from "./ClaudeAdapter.ts";
 const decodeClaudeSettings = Schema.decodeSync(ClaudeSettings);
 
 // Test-local service tag so the rest of the file can keep using `yield* ClaudeAdapter`.
@@ -268,6 +272,40 @@ const THREAD_ID = ThreadId.make("thread-claude-1");
 const RESUME_THREAD_ID = ThreadId.make("thread-claude-resume");
 
 describe("ClaudeAdapterLive", () => {
+  it("normalizes provider-neutral multi-select arrays for the Claude SDK", () => {
+    assert.deepEqual(
+      toClaudeSdkUserInputAnswers(
+        [
+          {
+            id: "Which features?",
+            header: "Features",
+            question: "Which features?",
+            options: [
+              { label: "API", description: "Enable the API" },
+              { label: "Worker", description: "Enable the worker" },
+            ],
+            multiSelect: true,
+          },
+          {
+            id: "Which region?",
+            header: "Region",
+            question: "Which region?",
+            options: [{ label: "EU", description: "Europe" }],
+            multiSelect: false,
+          },
+        ],
+        {
+          "Which features?": ["API", "Worker"],
+          "Which region?": "EU",
+        },
+      ),
+      {
+        "Which features?": "API, Worker",
+        "Which region?": "EU",
+      },
+    );
+  });
+
   it.effect("returns validation error for non-claude provider on startSession", () => {
     const harness = makeHarness();
     return Effect.gen(function* () {
@@ -3627,7 +3665,7 @@ describe("ClaudeAdapterLive", () => {
               { label: "React", description: "React.js" },
               { label: "Vue", description: "Vue.js" },
             ],
-            multiSelect: false,
+            multiSelect: true,
           },
         ],
       };
@@ -3660,7 +3698,7 @@ describe("ClaudeAdapterLive", () => {
 
       // Respond with the user's answers.
       yield* adapter.respondToUserInput(session.threadId, ApprovalRequestId.make(requestId!), {
-        "Which framework?": "React",
+        "Which framework?": ["React", "Vue"],
       });
 
       // The adapter should emit a user-input.resolved event.
@@ -3674,7 +3712,7 @@ describe("ClaudeAdapterLive", () => {
         return;
       }
       assert.deepEqual(resolvedEvent.value.payload.answers, {
-        "Which framework?": "React",
+        "Which framework?": ["React", "Vue"],
       });
       assert.deepEqual(resolvedEvent.value.providerRefs, {
         providerItemId: ProviderItemId.make("tool-ask-1"),
@@ -3685,7 +3723,7 @@ describe("ClaudeAdapterLive", () => {
       assert.equal((permissionResult as PermissionResult).behavior, "allow");
       const updatedInput = (permissionResult as { updatedInput: Record<string, unknown> })
         .updatedInput;
-      assert.deepEqual(updatedInput.answers, { "Which framework?": "React" });
+      assert.deepEqual(updatedInput.answers, { "Which framework?": "React, Vue" });
       // Original questions should be passed through.
       assert.deepEqual(updatedInput.questions, askInput.questions);
 
@@ -3703,7 +3741,7 @@ describe("ClaudeAdapterLive", () => {
       const v119Rendered = Object.entries(sdkAnswers)
         .map(([key, value]) => `"${key}"="${String(value)}"`)
         .join(", ");
-      assert.equal(v119Rendered, '"Which framework?"="React"');
+      assert.equal(v119Rendered, '"Which framework?"="React, Vue"');
 
       // Claude CLI 2.1.121 — lookup by full question text. This is the path
       // that regressed in #2388 when the answers were keyed by `header`.
@@ -3715,7 +3753,7 @@ describe("ClaudeAdapterLive", () => {
         .filter((entry): entry is string => entry !== null)
         .join(", ");
       assert.notEqual(v121Rendered, "", "Expected non-empty SDK 2.1.121 tool_result (#2388)");
-      assert.equal(v121Rendered, '"Which framework?"="React"');
+      assert.equal(v121Rendered, '"Which framework?"="React, Vue"');
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
       Effect.provide(harness.layer),
