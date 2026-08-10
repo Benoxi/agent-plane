@@ -37,7 +37,6 @@ import {
   clampCollapsedComposerCursor,
   type ComposerTrigger,
   collapseExpandedComposerCursor,
-  dispatchExplicitComposerSend,
   deriveCollapsedComposerPrimaryAction,
   detectComposerTrigger,
   expandCollapsedComposerCursor,
@@ -592,6 +591,8 @@ export interface ChatComposerHandle {
     prompt?: string;
     detectTrigger?: boolean;
   }) => void;
+  /** Synchronously detach and abort voice recognition without changing draft text. */
+  cancelVoiceDictation: () => void;
   /** Insert a terminal context from the terminal drawer. */
   addTerminalContext: (selection: TerminalContextSelection) => void;
   /** Get the current prompt/effort/model state for use in send. */
@@ -1940,7 +1941,11 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   }, [startVoiceDictation, stopVoiceDictation, voiceState]);
 
   useLayoutEffect(() => {
-    cancelVoiceDictation();
+    setVoiceElapsedSeconds(0);
+    setVoiceState("idle");
+    return () => {
+      cancelVoiceDictation({ updateUi: false });
+    };
   }, [
     cancelVoiceDictation,
     draftId,
@@ -2146,6 +2151,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
 
   const submitComposer = useCallback(
     (event?: { preventDefault: () => void }) => {
+      cancelVoiceDictation();
       if (noProviderAvailable || isSendDisabled) {
         event?.preventDefault();
         return;
@@ -2163,10 +2169,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         });
         return;
       }
-      dispatchExplicitComposerSend({
-        cancelVoiceDictation,
-        send: () => onSend(event),
-      });
+      onSend(event);
       if (shouldBlurMobileComposerOnSubmit()) {
         blurMobileComposerAfterSend();
       }
@@ -2916,6 +2919,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
             : null,
         );
       },
+      cancelVoiceDictation,
       addTerminalContext: (selection: TerminalContextSelection) => {
         if (!activeThread) return;
         const snapshot = composerEditorRef.current?.readSnapshot() ?? {
@@ -2969,6 +2973,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     }),
     [
       activeThread,
+      cancelVoiceDictation,
       composerDraftTarget,
       composerCursor,
       composerTerminalContexts,

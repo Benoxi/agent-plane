@@ -17,14 +17,6 @@ export interface FencedCodeBlockInsertion {
   readonly selectionEnd: number;
 }
 
-export function dispatchExplicitComposerSend(input: {
-  cancelVoiceDictation: () => void;
-  send: () => void;
-}): void {
-  input.cancelVoiceDictation();
-  input.send();
-}
-
 export function insertFencedCodeBlock(
   value: string,
   selectionStartInput: number,
