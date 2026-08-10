@@ -15,7 +15,14 @@ export const TIMELINE_MINIMAP_MIN_ITEMS = 2;
 export const TIMELINE_MINIMAP_MAX_HEIGHT_CSS = "calc(100vh - 18rem)";
 export const TIMELINE_CONTENT_MAX_WIDTH = 768;
 export const TIMELINE_MINIMAP_PERSISTENT_GUTTER = 48;
-export const TIMELINE_NEAR_END_THRESHOLD = 0.1;
+export const TIMELINE_EXACT_END_THRESHOLD = 0;
+
+export type TimelineAutoScrollMode = "strict" | "disabled";
+
+// Keep this as an explicit policy switch: if exact-end tracking proves
+// unreliable on a supported surface, disabling automatic movement is safer
+// than pulling someone away from the content they are reading.
+export const TIMELINE_AUTO_SCROLL_MODE: TimelineAutoScrollMode = "strict";
 
 export interface TimelineEndState {
   readonly isAtEnd?: boolean;
@@ -23,11 +30,26 @@ export interface TimelineEndState {
 }
 
 export function resolveTimelineIsAtEnd(state: TimelineEndState | undefined): boolean | undefined {
-  return state?.isNearEnd ?? state?.isAtEnd;
+  return state?.isAtEnd;
 }
 
-export function shouldCancelTimelineLiveFollow(isNearEnd: boolean | undefined): boolean {
-  return isNearEnd === false;
+export function isTimelineAutoScrollEnabled(mode: TimelineAutoScrollMode): boolean {
+  return mode === "strict";
+}
+
+export function shouldAutoScrollTimeline(
+  isAtEnd: boolean | undefined,
+  liveFollowActive: boolean,
+  mode: TimelineAutoScrollMode = TIMELINE_AUTO_SCROLL_MODE,
+): boolean {
+  return isTimelineAutoScrollEnabled(mode) && isAtEnd === true && liveFollowActive;
+}
+
+export function shouldCancelTimelineLiveFollow(
+  isAtEnd: boolean | undefined,
+  mode: TimelineAutoScrollMode = TIMELINE_AUTO_SCROLL_MODE,
+): boolean {
+  return !shouldAutoScrollTimeline(isAtEnd, true, mode);
 }
 
 export function isTimelineLiveFollowActive(
