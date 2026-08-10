@@ -75,7 +75,7 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
   const navigate = useNavigate();
   const currentHash = useLocation({ select: (location) => location.hash });
   const canGoBack = useCanGoBack();
-  const { isMobile, setOpenMobile, open, setOpen } = useSidebar();
+  const { closeMobileSidebar, isMobile, setOpenMobile, open, setOpen } = useSidebar();
   const searchInputRef = useRef<HTMLInputElement>(null);
   const [query, setQuery] = useState("");
   const [activeResultIndex, setActiveResultIndex] = useState(0);
@@ -122,15 +122,17 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [isMobile, open, setOpen, setOpenMobile]);
-
   const handleSectionClick = useCallback(
     (to: SettingsPath) => {
       if (isMobile) {
-        setOpenMobile(false);
+        closeMobileSidebar(() => {
+          void navigate({ to, replace: true });
+        });
+        return;
       }
       void navigate({ to, hash: "", replace: true, hashScrollIntoView: false });
     },
-    [isMobile, navigate, setOpenMobile],
+    [closeMobileSidebar, isMobile, navigate],
   );
   const clearSearch = useCallback(() => {
     setQuery("");
@@ -139,17 +141,21 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
   const handleSearchResultClick = useCallback(
     (item: SettingsSearchItem) => {
       clearSearch();
+      const navigateToResult = () => {
+        const targetId = item.targetId ?? item.id;
+        if (pathname === item.to && currentHash.replace(/^#/, "") === targetId) {
+          scrollToSettingsTarget(targetId);
+          return;
+        }
+        void navigate({ to: item.to, hash: targetId, replace: true, hashScrollIntoView: false });
+      };
       if (isMobile) {
-        setOpenMobile(false);
-      }
-      const targetId = item.targetId ?? item.id;
-      if (pathname === item.to && currentHash.replace(/^#/, "") === targetId) {
-        scrollToSettingsTarget(targetId);
+        closeMobileSidebar(navigateToResult);
         return;
       }
-      void navigate({ to: item.to, hash: targetId, replace: true, hashScrollIntoView: false });
+      navigateToResult();
     },
-    [clearSearch, currentHash, isMobile, navigate, pathname, setOpenMobile],
+    [clearSearch, closeMobileSidebar, currentHash, isMobile, navigate, pathname],
   );
   const handleSearchKeyDown = useCallback(
     (event: KeyboardEvent<HTMLInputElement>) => {
@@ -180,14 +186,21 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
   );
   const handleBackClick = useCallback(() => {
     if (isMobile) {
-      setOpenMobile(false);
+      closeMobileSidebar(() => {
+        if (canGoBack) {
+          window.history.back();
+          return;
+        }
+        void navigate({ to: "/" });
+      });
+      return;
     }
     if (canGoBack) {
       window.history.back();
       return;
     }
     void navigate({ to: "/" });
-  }, [canGoBack, isMobile, navigate, setOpenMobile]);
+  }, [canGoBack, closeMobileSidebar, isMobile, navigate]);
 
   return (
     <>

@@ -3,6 +3,7 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   clampCollapsedComposerCursor,
   collapseExpandedComposerCursor,
+  deriveCollapsedComposerPrimaryAction,
   detectComposerTrigger,
   expandCollapsedComposerCursor,
   insertFencedCodeBlock,
@@ -58,6 +59,44 @@ describe("insertFencedCodeBlock", () => {
       selectionStart: 4,
       selectionEnd: 8,
     });
+  });
+});
+
+describe("deriveCollapsedComposerPrimaryAction", () => {
+  const idleInput = {
+    isRunning: false,
+    isSendBusy: false,
+    isConnecting: false,
+    projectSelectionRequired: false,
+    environmentUnavailable: false,
+    hasSendableContent: true,
+  };
+
+  it("shows an enabled send action for sendable idle content", () => {
+    expect(deriveCollapsedComposerPrimaryAction(idleInput)).toEqual({
+      kind: "send",
+      label: "Send message",
+      disabled: false,
+    });
+  });
+
+  it("shows an enabled stop action while generation is running", () => {
+    expect(
+      deriveCollapsedComposerPrimaryAction({
+        ...idleInput,
+        isRunning: true,
+        hasSendableContent: false,
+      }),
+    ).toEqual({ kind: "stop", label: "Stop generation", disabled: false });
+  });
+
+  it("keeps idle send guards", () => {
+    expect(
+      deriveCollapsedComposerPrimaryAction({ ...idleInput, isConnecting: true }),
+    ).toMatchObject({ kind: "send", disabled: true });
+    expect(
+      deriveCollapsedComposerPrimaryAction({ ...idleInput, hasSendableContent: false }),
+    ).toMatchObject({ kind: "send", disabled: true });
   });
 });
 

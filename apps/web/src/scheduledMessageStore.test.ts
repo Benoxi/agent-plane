@@ -103,7 +103,7 @@ describe("scheduledMessageStore", () => {
     expect(message?.source).toBeUndefined();
   });
 
-  it("expires overdue pending items and interrupted sends on hydration", async () => {
+  it("keeps overdue pending items retryable and expires interrupted sends on hydration", async () => {
     const storage = createLocalStorageStub();
     storage.setItem(
       "t3code:scheduled-messages:v1",
@@ -154,7 +154,7 @@ describe("scheduledMessageStore", () => {
     expect(store.readScheduledMessages()).toEqual([
       expect.objectContaining({
         id: "pending-overdue",
-        status: "expired",
+        status: "pending",
       }),
       expect.objectContaining({
         id: "sending",

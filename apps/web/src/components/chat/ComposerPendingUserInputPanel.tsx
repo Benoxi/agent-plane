@@ -5,8 +5,17 @@ import {
   derivePendingUserInputProgress,
   type PendingUserInputDraftAnswer,
 } from "../../pendingUserInput";
-import { CheckIcon, ChevronDownIcon, ChevronUpIcon } from "lucide-react";
+import { CheckIcon, ChevronDownIcon, ChevronUpIcon, XIcon } from "lucide-react";
 import { cn } from "~/lib/utils";
+
+export function pendingQuestionKeyboardShortcutsEnabled(input: {
+  readonly hasActiveQuestion: boolean;
+  readonly isCollapsed: boolean;
+  readonly isMinimized: boolean;
+  readonly isResponding: boolean;
+}): boolean {
+  return input.hasActiveQuestion && !input.isCollapsed && !input.isMinimized && !input.isResponding;
+}
 
 interface PendingUserInputPanelProps {
   pendingUserInputs: PendingUserInput[];
@@ -62,6 +71,7 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
   const autoAdvanceTimerRef = useRef<number | null>(null);
   const onAdvanceRef = useRef(onAdvance);
   const [isCollapsed, setIsCollapsed] = useState(false);
+  const [isMinimized, setIsMinimized] = useState(false);
   const [optimisticSingleSelect, setOptimisticSingleSelect] = useState<{
     questionId: string;
     optionLabel: string;
@@ -121,7 +131,17 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
   // outside editable fields. Multi-select prompts toggle options in place; single-
   // select prompts keep the existing auto-advance behavior.
   useEffect(() => {
-    if (!activeQuestion || isCollapsed || isResponding) return;
+    if (
+      !pendingQuestionKeyboardShortcutsEnabled({
+        hasActiveQuestion: Boolean(activeQuestion),
+        isCollapsed,
+        isMinimized,
+        isResponding,
+      }) ||
+      !activeQuestion
+    ) {
+      return;
+    }
     const handler = (event: globalThis.KeyboardEvent) => {
       if (event.metaKey || event.ctrlKey || event.altKey) return;
       const target = event.target;
@@ -145,10 +165,40 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
     };
     document.addEventListener("keydown", handler);
     return () => document.removeEventListener("keydown", handler);
-  }, [activeQuestion, isCollapsed, isResponding]);
+  }, [activeQuestion, isCollapsed, isMinimized, isResponding]);
+
+  const handleMinimize = () => {
+    if (autoAdvanceTimerRef.current !== null) {
+      window.clearTimeout(autoAdvanceTimerRef.current);
+      autoAdvanceTimerRef.current = null;
+    }
+    setOptimisticSingleSelect(null);
+    setIsMinimized(true);
+  };
 
   if (!activeQuestion) {
     return null;
+  }
+
+  if (isMinimized) {
+    return (
+      <div className="px-3 py-2 sm:px-4" data-pending-question-minimized="true">
+        <button
+          aria-label="Reopen pending agent question"
+          className="flex min-h-10 w-full items-center gap-2 rounded-lg border border-border/55 bg-background/55 px-3 py-2 text-left transition-colors hover:bg-background/80 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary/50"
+          onClick={() => setIsMinimized(false)}
+          type="button"
+        >
+          <span className="shrink-0 text-xs font-semibold tracking-wide text-muted-foreground uppercase">
+            Agent question pending
+          </span>
+          <span className="min-w-0 flex-1 truncate text-sm text-foreground/80">
+            {activeQuestion.question}
+          </span>
+          <ChevronDownIcon aria-hidden="true" className="size-4 shrink-0 text-muted-foreground" />
+        </button>
+      </div>
+    );
   }
 
   const customAnswerActive = progress.customAnswer.trim().length > 0;
@@ -173,13 +223,22 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
             isCollapsed ? "Expand pending agent question" : "Collapse pending agent question"
           }
           onClick={() => setIsCollapsed((current) => !current)}
-          className="flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground/70 transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary/50"
+          className="flex size-10 shrink-0 items-center justify-center rounded-md text-muted-foreground/70 transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary/50"
         >
           {isCollapsed ? (
             <ChevronDownIcon aria-hidden="true" className="size-4" />
           ) : (
             <ChevronUpIcon aria-hidden="true" className="size-4" />
           )}
+        </button>
+        <button
+          aria-label="Minimize pending agent question to banner"
+          className="flex size-10 shrink-0 items-center justify-center rounded-md text-muted-foreground/70 transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary/50"
+          onClick={handleMinimize}
+          title="Minimize; the agent will keep waiting"
+          type="button"
+        >
+          <XIcon aria-hidden="true" className="size-4" />
         </button>
       </div>
       {isCollapsed ? (

@@ -1,6 +1,6 @@
 import { SymbolView } from "../components/AppSymbol";
 import { memo, useEffect, useRef, useState } from "react";
-import { Pressable, type ColorValue } from "react-native";
+import { Alert, Pressable, type ColorValue } from "react-native";
 
 import { copyTextWithHaptic } from "../lib/copyTextWithHaptic";
 
@@ -35,15 +35,25 @@ export const CopyTextButton = memo(function CopyTextButton(props: {
       disabled={props.text.length === 0}
       hitSlop={8}
       onPress={() => {
-        copyTextWithHaptic(props.text);
-        setCopied(true);
-        if (resetTimeoutRef.current) {
-          clearTimeout(resetTimeoutRef.current);
-        }
-        resetTimeoutRef.current = setTimeout(() => {
-          setCopied(false);
-          resetTimeoutRef.current = null;
-        }, COPY_FEEDBACK_DURATION_MS);
+        void copyTextWithHaptic(props.text, { target: "message" }).then((didCopy) => {
+          if (!didCopy) {
+            setCopied(false);
+            Alert.alert(
+              "Couldn't copy message",
+              "Clipboard access was unavailable. Try again after checking app permissions.",
+            );
+            return;
+          }
+
+          setCopied(true);
+          if (resetTimeoutRef.current) {
+            clearTimeout(resetTimeoutRef.current);
+          }
+          resetTimeoutRef.current = setTimeout(() => {
+            setCopied(false);
+            resetTimeoutRef.current = null;
+          }, COPY_FEEDBACK_DURATION_MS);
+        });
       }}
       style={({ pressed }) => ({
         width: props.buttonSize ?? 30,

@@ -172,6 +172,7 @@ import { useNowMinute } from "../hooks/useNowMinute";
 import { useNewThreadHandler } from "../hooks/useHandleNewThread";
 import { resolveAppModelSelectionForInstance } from "../modelSelection";
 import { getTerminalFocusOwner } from "../lib/terminalFocus";
+import { formatConversationForClipboard } from "../lib/conversationCopy";
 import { preventRepeatedTerminalCloseShortcut } from "../lib/terminalCloseShortcut";
 import { resolveNewDraftStartFromOrigin } from "../lib/chatThreadActions";
 import {
@@ -227,6 +228,12 @@ import { DraftHeroHeadline } from "./chat/DraftHeroHeadline";
 import { ExpandedImageDialog } from "./chat/ExpandedImageDialog";
 import { PullRequestThreadDialog } from "./PullRequestThreadDialog";
 import { MessagesTimeline } from "./chat/MessagesTimeline";
+import {
+  isTimelineLiveFollowActive,
+  keyboardEventMayNavigateTimelineAwayFromEnd,
+  resolveTimelineIsAtEnd,
+  shouldCancelTimelineLiveFollow,
+} from "./chat/MessagesTimeline.logic";
 import { ChatHeader } from "./chat/ChatHeader";
 import { PanelLayoutControls, RightPanelMaximizeControl } from "./chat/PanelLayoutControls";
 import { type ExpandedImagePreview } from "./chat/ExpandedImagePreview";
@@ -2394,6 +2401,13 @@ function ChatViewContent(props: ChatViewProps) {
       deriveTimelineEntries(timelineMessages, activeThread?.proposedPlans ?? [], workLogEntries),
     [activeThread?.proposedPlans, timelineMessages, workLogEntries],
   );
+  const conversationCopyText = useMemo(
+    () =>
+      activeThread
+        ? formatConversationForClipboard({ title: activeThread.title, entries: timelineEntries })
+        : "",
+    [activeThread, timelineEntries],
+  );
   const [dockedDraftHeroThreadKey, setDockedDraftHeroThreadKey] = useState<string | null>(null);
   const draftHeroDockRequested =
     activeThreadKey !== null && dockedDraftHeroThreadKey === activeThreadKey;
@@ -3529,6 +3543,7 @@ function ChatViewContent(props: ChatViewProps) {
     readonly userScrollGeneration: number;
   } | null>(null);
   const anchorScrollRestoreFrameRef = useRef<number | null>(null);
+  const manualNavigationCheckFrameRef = useRef<number | null>(null);
   const cancelTimelineLiveFollowForUserNavigation = useCallback(() => {
     anchorUserScrollGenerationRef.current += 1;
     timelineScrollModeRef.current = "free-scrolling";
@@ -3542,6 +3557,10 @@ function ChatViewContent(props: ChatViewProps) {
       cancelAnimationFrame(anchorScrollRestoreFrameRef.current);
       anchorScrollRestoreFrameRef.current = null;
     }
+    if (shouldCancelTimelineLiveFollow(resolveTimelineIsAtEnd(legendListRef.current?.getState()))) {
+      isAtEndRef.current = false;
+      showScrollDebouncer.current.maybeExecute();
+    }
   }, []);
   const cancelTimelineLiveFollowForUserNavigationRef = useRef(
     cancelTimelineLiveFollowForUserNavigation,
@@ -3550,6 +3569,24 @@ function ChatViewContent(props: ChatViewProps) {
     cancelTimelineLiveFollowForUserNavigationRef.current =
       cancelTimelineLiveFollowForUserNavigation;
   }, [cancelTimelineLiveFollowForUserNavigation]);
+  const cancelTimelineLiveFollowIfAwayFromEnd = useCallback(() => {
+    const cancelIfAway = () => {
+      const isNearEnd = resolveTimelineIsAtEnd(legendListRef.current?.getState());
+      if (shouldCancelTimelineLiveFollow(isNearEnd)) {
+        cancelTimelineLiveFollowForUserNavigationRef.current();
+        return true;
+      }
+      return false;
+    };
+
+    if (cancelIfAway() || manualNavigationCheckFrameRef.current !== null) {
+      return;
+    }
+    manualNavigationCheckFrameRef.current = requestAnimationFrame(() => {
+      manualNavigationCheckFrameRef.current = null;
+      cancelIfAway();
+    });
+  }, []);
   const getActiveTimelineTurnMetrics = useCallback(
     (list?: LegendListRef | null) => {
       const resolvedList = list ?? legendListRef.current;
@@ -3618,7 +3655,17 @@ function ChatViewContent(props: ChatViewProps) {
         return;
       }
       const handleManualNavigation = () => {
-        cancelTimelineLiveFollowForUserNavigationRef.current();
+        cancelTimelineLiveFollowIfAwayFromEnd();
+      };
+      const handlePointerMove = (event: PointerEvent) => {
+        if (event.buttons !== 0) {
+          cancelTimelineLiveFollowForUserNavigationRef.current();
+        }
+      };
+      const handleKeyDown = (event: KeyboardEvent) => {
+        if (keyboardEventMayNavigateTimelineAwayFromEnd(event)) {
+          cancelTimelineLiveFollowIfAwayFromEnd();
+        }
       };
       scrollNode.addEventListener("wheel", handleManualNavigation, {
         passive: true,
@@ -3626,21 +3673,29 @@ function ChatViewContent(props: ChatViewProps) {
       scrollNode.addEventListener("touchmove", handleManualNavigation, {
         passive: true,
       });
-      scrollNode.addEventListener("pointerdown", handleManualNavigation, {
+      scrollNode.addEventListener("pointermove", handlePointerMove, {
         passive: true,
       });
+      scrollNode.addEventListener("pointerup", handleManualNavigation, { passive: true });
+      scrollNode.addEventListener("keydown", handleKeyDown);
       removeListeners = () => {
         scrollNode.removeEventListener("wheel", handleManualNavigation);
         scrollNode.removeEventListener("touchmove", handleManualNavigation);
-        scrollNode.removeEventListener("pointerdown", handleManualNavigation);
+        scrollNode.removeEventListener("pointermove", handlePointerMove);
+        scrollNode.removeEventListener("pointerup", handleManualNavigation);
+        scrollNode.removeEventListener("keydown", handleKeyDown);
       };
     });
 
     return () => {
       cancelAnimationFrame(frame);
+      if (manualNavigationCheckFrameRef.current !== null) {
+        cancelAnimationFrame(manualNavigationCheckFrameRef.current);
+        manualNavigationCheckFrameRef.current = null;
+      }
       removeListeners?.();
     };
-  }, [activeThread?.id]);
+  }, [activeThread?.id, cancelTimelineLiveFollowIfAwayFromEnd]);
 
   const onTimelineAnchorReady = useCallback((messageId: MessageId, anchorIndex: number) => {
     if (pendingTimelineAnchorRef.current === messageId) {
@@ -3696,7 +3751,12 @@ function ChatViewContent(props: ChatViewProps) {
     if (settledTimelineAnchorRef.current !== messageId) {
       return;
     }
-    if (liveFollowUserScrollGenerationRef.current === anchorUserScrollGenerationRef.current) {
+    if (
+      isTimelineLiveFollowActive(
+        liveFollowUserScrollGenerationRef.current,
+        anchorUserScrollGenerationRef.current,
+      )
+    ) {
       return;
     }
     const scrollOffset = legendListRef.current?.getState().scroll;
@@ -3737,7 +3797,10 @@ function ChatViewContent(props: ChatViewProps) {
   const onIsAtEndChange = useCallback((isAtEnd: boolean) => {
     if (
       !isAtEnd &&
-      liveFollowUserScrollGenerationRef.current === anchorUserScrollGenerationRef.current
+      isTimelineLiveFollowActive(
+        liveFollowUserScrollGenerationRef.current,
+        anchorUserScrollGenerationRef.current,
+      )
     ) {
       showScrollDebouncer.current.cancel();
       setShowScrollToBottom(false);
@@ -3761,14 +3824,24 @@ function ChatViewContent(props: ChatViewProps) {
     if (!activeThread?.id) {
       return;
     }
-    if (liveFollowUserScrollGenerationRef.current !== anchorUserScrollGenerationRef.current) {
+    if (
+      !isTimelineLiveFollowActive(
+        liveFollowUserScrollGenerationRef.current,
+        anchorUserScrollGenerationRef.current,
+      )
+    ) {
       return;
     }
 
     let secondFrame: number | null = null;
     const frame = requestAnimationFrame(() => {
       secondFrame = requestAnimationFrame(() => {
-        if (liveFollowUserScrollGenerationRef.current !== anchorUserScrollGenerationRef.current) {
+        if (
+          !isTimelineLiveFollowActive(
+            liveFollowUserScrollGenerationRef.current,
+            anchorUserScrollGenerationRef.current,
+          )
+        ) {
           return;
         }
         if (pendingTimelineAnchorRef.current !== null) {
@@ -5920,6 +5993,7 @@ function ChatViewContent(props: ChatViewProps) {
             availableEditors={availableEditors}
             rightPanelOpen={rightPanelOpen}
             gitCwd={gitCwd}
+            conversationCopyText={conversationCopyText}
             onNewThreadInProject={handleNewThreadInActiveProject}
             onRunProjectScript={runProjectScript}
             onAddProjectScript={saveProjectScript}

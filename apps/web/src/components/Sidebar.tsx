@@ -1118,7 +1118,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
     (settings) => settings.sidebarThreadPreviewCount,
   );
   const router = useRouter();
-  const { isMobile, setOpenMobile } = useSidebar();
+  const { closeMobileSidebar, isMobile } = useSidebar();
   const markThreadUnread = useUiStateStore((state) => state.markThreadUnread);
   const setProjectExpanded = useUiStateStore((state) => state.setProjectExpanded);
   const toggleThreadSelection = useThreadSelectionStore((state) => state.toggleThread);
@@ -1712,15 +1712,19 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
         clearSelection();
       }
       setSelectionAnchor(scopedThreadKey(threadRef));
+      const navigate = () => {
+        void router.navigate({
+          to: "/$environmentId/$threadId",
+          params: buildThreadRouteParams(threadRef),
+        });
+      };
       if (isMobile) {
-        setOpenMobile(false);
+        closeMobileSidebar(navigate);
+        return;
       }
-      void router.navigate({
-        to: "/$environmentId/$threadId",
-        params: buildThreadRouteParams(threadRef),
-      });
+      navigate();
     },
-    [clearSelection, isMobile, router, setOpenMobile, setSelectionAnchor],
+    [clearSelection, closeMobileSidebar, isMobile, router, setSelectionAnchor],
   );
 
   const handleThreadClick = useCallback(
@@ -1758,20 +1762,24 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
         clearSelection();
       }
       setSelectionAnchor(threadKey);
+      const navigate = () => {
+        void router.navigate({
+          to: "/$environmentId/$threadId",
+          params: buildThreadRouteParams(threadRef),
+        });
+      };
       if (isMobile) {
-        setOpenMobile(false);
+        closeMobileSidebar(navigate);
+        return;
       }
-      void router.navigate({
-        to: "/$environmentId/$threadId",
-        params: buildThreadRouteParams(threadRef),
-      });
+      navigate();
     },
     [
       clearSelection,
+      closeMobileSidebar,
       isMobile,
       rangeSelectTo,
       router,
-      setOpenMobile,
       setSelectionAnchor,
       toggleThreadSelection,
     ],
@@ -1893,28 +1901,32 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
 
   const createThreadForProjectMember = useCallback(
     (member: SidebarProjectGroupMember) => {
-      if (isMobile) {
-        setOpenMobile(false);
-      }
-      void (async () => {
-        // No options: branch, worktree, and env mode come from the user's
-        // configured defaults, never from the currently viewed thread.
-        const result = await settlePromise(() =>
-          handleNewThread(scopeProjectRef(member.environmentId, member.id)),
-        );
-        if (result._tag === "Failure") {
-          const error = squashAtomCommandFailure(result);
-          toastManager.add(
-            stackedThreadToast({
-              type: "error",
-              title: "Could not create thread",
-              description: error instanceof Error ? error.message : "An error occurred.",
-            }),
+      const createThread = () => {
+        void (async () => {
+          const result = await settlePromise(() =>
+            // No options: branch, worktree, and env mode come from the user's
+            // configured defaults, never from the currently viewed thread.
+            handleNewThread(scopeProjectRef(member.environmentId, member.id)),
           );
-        }
-      })();
+          if (result._tag === "Failure") {
+            const error = squashAtomCommandFailure(result);
+            toastManager.add(
+              stackedThreadToast({
+                type: "error",
+                title: "Could not create thread",
+                description: error instanceof Error ? error.message : "An error occurred.",
+              }),
+            );
+          }
+        })();
+      };
+      if (isMobile) {
+        closeMobileSidebar(createThread);
+        return;
+      }
+      createThread();
     },
-    [handleNewThread, isMobile, setOpenMobile],
+    [closeMobileSidebar, handleNewThread, isMobile],
   );
 
   const handleCreateThreadClick = useCallback(
@@ -3034,7 +3046,7 @@ export default function Sidebar() {
   const updateSettings = useUpdateClientSettings();
   const handleNewThread = useNewThreadHandler();
   const { archiveThread, deleteThread } = useThreadActions();
-  const { isMobile, setOpenMobile } = useSidebar();
+  const { closeMobileSidebar, isMobile } = useSidebar();
   const routeTarget = useParams({
     strict: false,
     select: (params) => resolveThreadRouteTarget(params),
@@ -3212,15 +3224,19 @@ export default function Sidebar() {
         clearSelection();
       }
       setSelectionAnchor(scopedThreadKey(threadRef));
+      const navigateToSelectedThread = () => {
+        void navigate({
+          to: "/$environmentId/$threadId",
+          params: buildThreadRouteParams(threadRef),
+        });
+      };
       if (isMobile) {
-        setOpenMobile(false);
+        closeMobileSidebar(navigateToSelectedThread);
+        return;
       }
-      void navigate({
-        to: "/$environmentId/$threadId",
-        params: buildThreadRouteParams(threadRef),
-      });
+      navigateToSelectedThread();
     },
-    [clearSelection, isMobile, navigate, setOpenMobile, setSelectionAnchor],
+    [clearSelection, closeMobileSidebar, isMobile, navigate, setSelectionAnchor],
   );
 
   const projectDnDSensors = useSensors(

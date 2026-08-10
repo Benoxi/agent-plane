@@ -1,5 +1,21 @@
 import type { ScopedThreadRef, ThreadId } from "@t3tools/contracts";
 
+const ERROR_DESCRIPTION_CLAMP_MIN_CHARS = 180;
+
+/** Keep very long errors bounded while showing enough context to diagnose them in-place. */
+export function errorDescriptionClampClass(
+  type: unknown,
+  description: unknown,
+): string | undefined {
+  if (type !== "error" || typeof description !== "string") {
+    return undefined;
+  }
+  if (description.length < ERROR_DESCRIPTION_CLAMP_MIN_CHARS) {
+    return undefined;
+  }
+  return "line-clamp-8";
+}
+
 export function shouldHideCollapsedToastContent(
   visibleToastIndex: number,
   visibleToastCount: number,

@@ -56,6 +56,7 @@ import Animated, {
 import { useThemeColor } from "../../lib/useThemeColor";
 import { useFontFamily } from "../../lib/useFontFamily";
 import { copyTextWithHaptic } from "../../lib/copyTextWithHaptic";
+import { shouldShowAssistantMessageMeta } from "./threadMessageMeta";
 import {
   hasNativeSelectableMarkdownText,
   SelectableMarkdownText,
@@ -890,11 +891,13 @@ function renderFeedEntry(
       message.role === "assistant" &&
       props.unsettledTurnId !== null &&
       message.turnId === props.unsettledTurnId;
-    const showAssistantMeta =
-      message.role === "assistant" &&
-      props.terminalAssistantMessageIds.has(message.id) &&
-      !assistantTurnStillInProgress &&
-      !message.streaming;
+    const showAssistantMeta = shouldShowAssistantMessageMeta({
+      role: message.role,
+      turnId: message.turnId,
+      messageIdIsTerminalForTurn: props.terminalAssistantMessageIds.has(message.id),
+      assistantTurnStillInProgress,
+      streaming: message.streaming,
+    });
 
     if (isUser) {
       const enterAnimated = isFreshTimestamp(message.createdAt);

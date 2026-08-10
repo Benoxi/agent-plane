@@ -83,6 +83,48 @@ export function collectSpeechRecognitionText(event: SpeechRecognitionEvent): {
   };
 }
 
+export function createSpeechRecognitionTranscriptTracker(): {
+  update: (event: SpeechRecognitionEvent) => { finalText: string; interimText: string };
+} {
+  const finalTextByResultIndex = new Map<number, string>();
+
+  return {
+    update: (event) => {
+      for (const index of finalTextByResultIndex.keys()) {
+        if (index >= event.results.length) {
+          finalTextByResultIndex.delete(index);
+        }
+      }
+
+      const interimChunks: string[] = [];
+      for (let index = 0; index < event.results.length; index += 1) {
+        const result = event.results[index];
+        if (!result) continue;
+        const transcript = result[0]?.transcript?.trim();
+        if (!transcript) {
+          if (index >= event.resultIndex) finalTextByResultIndex.delete(index);
+          continue;
+        }
+        if (result.isFinal) {
+          finalTextByResultIndex.set(index, transcript);
+        } else {
+          finalTextByResultIndex.delete(index);
+          interimChunks.push(transcript);
+        }
+      }
+
+      return {
+        finalText: [...finalTextByResultIndex.entries()]
+          .toSorted(([left], [right]) => left - right)
+          .map(([, transcript]) => transcript)
+          .join(" ")
+          .trim(),
+        interimText: interimChunks.join(" ").trim(),
+      };
+    },
+  };
+}
+
 export function createComposerSpeechRecognition(input: {
   language: string;
   onFinalText: (text: string) => void;
@@ -107,9 +149,10 @@ export function createComposerSpeechRecognition(input: {
   recognition.continuous = true;
   recognition.interimResults = true;
   recognition.lang = input.language || "en-US";
+  const transcriptTracker = createSpeechRecognitionTranscriptTracker();
   recognition.addEventListener("result", (event) => {
     const speechEvent = event as SpeechRecognitionEvent;
-    const text = collectSpeechRecognitionText(speechEvent);
+    const text = transcriptTracker.update(speechEvent);
     if (text.finalText) {
       input.onFinalText(text.finalText);
     }

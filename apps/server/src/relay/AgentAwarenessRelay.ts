@@ -80,16 +80,31 @@ export function shouldPublishAgentAwarenessEvent(event: OrchestrationEvent): boo
     case "thread.interaction-mode-set":
       return false;
     case "thread.activity-appended":
-      return (
-        event.payload.activity.kind === "approval.requested" ||
-        event.payload.activity.kind === "approval.resolved" ||
-        event.payload.activity.kind === "provider.approval.respond.failed" ||
-        event.payload.activity.kind === "user-input.requested" ||
-        event.payload.activity.kind === "user-input.resolved" ||
-        event.payload.activity.kind === "runtime.error"
-      );
+      return shouldPublishAgentAwarenessActivityKind(event.payload.activity.kind);
     default:
       return true;
+  }
+}
+
+export function shouldPublishAgentAwarenessActivityKind(kind: string): boolean {
+  switch (kind) {
+    case "approval.requested":
+    case "approval.resolved":
+    case "provider.approval.respond.failed":
+    case "user-input.requested":
+    case "user-input.resolved":
+    case "runtime.error":
+      return true;
+    case "task.started":
+    case "task.progress":
+    case "task.completed":
+      // Provider task events represent child/subagent work within the primary
+      // thread. Publishing them would create per-subagent notification churn;
+      // the thread session/turn projection publishes the single user-facing
+      // completion when the primary agent settles.
+      return false;
+    default:
+      return false;
   }
 }
 
