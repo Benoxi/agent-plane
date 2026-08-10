@@ -210,12 +210,12 @@ import {
   type SidebarProjectSnapshot,
 } from "../sidebarProjectGrouping";
 const SIDEBAR_SORT_LABELS: Record<SidebarProjectSortOrder, string> = {
-  updated_at: "Last updated",
+  updated_at: "Last user message",
   created_at: "Created at",
   manual: "Manual",
 };
 const SIDEBAR_THREAD_SORT_LABELS: Record<SidebarThreadSortOrder, string> = {
-  updated_at: "Last updated",
+  updated_at: "Last user message",
   created_at: "Created at",
 };
 const SIDEBAR_LIST_ANIMATION_OPTIONS = {
@@ -866,9 +866,7 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
                         : "text-muted-foreground/40"
                     }`}
                   >
-                    {formatRelativeTimeLabel(
-                      thread.latestUserMessageAt ?? thread.updatedAt ?? thread.createdAt,
-                    )}
+                    {formatRelativeTimeLabel(thread.latestUserMessageAt ?? thread.createdAt)}
                   </span>
                 )}
               </span>

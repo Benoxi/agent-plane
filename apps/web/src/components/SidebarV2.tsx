@@ -180,7 +180,7 @@ function compactSidebarTimeLabel(label: string): string {
 }
 
 function threadTimeLabel(thread: SidebarThreadSummary): string {
-  const timestamp = thread.updatedAt;
+  const timestamp = thread.latestUserMessageAt ?? thread.createdAt;
   return compactSidebarTimeLabel(formatRelativeTimeLabel(timestamp));
 }
 

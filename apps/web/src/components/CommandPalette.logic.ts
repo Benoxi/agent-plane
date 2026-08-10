@@ -211,9 +211,7 @@ export function buildThreadActionItems<TThread extends BuildThreadActionItemsThr
         ],
         title: thread.title,
         description: descriptionParts.join(` · `),
-        timestamp: formatRelativeTimeLabel(
-          thread.latestUserMessageAt ?? thread.updatedAt ?? thread.createdAt,
-        ),
+        timestamp: formatRelativeTimeLabel(thread.latestUserMessageAt ?? thread.createdAt),
         icon: input.icon,
       },
       leadingContent ? { titleLeadingContent: leadingContent } : {},

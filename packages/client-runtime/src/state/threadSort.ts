@@ -6,6 +6,11 @@ import * as Order from "effect/Order";
 export interface ThreadSortInput {
   readonly createdAt: string;
   readonly updatedAt: string;
+  readonly latestUserMessageAt?: string | null;
+  readonly messages?: ReadonlyArray<{
+    readonly createdAt: string;
+    readonly role: string;
+  }>;
 }
 
 export function toSortableTimestamp(iso: string | undefined): number | null {
@@ -34,7 +39,31 @@ export function getThreadSortTimestamp(
       getFirstSortableTimestamp(thread.createdAt, thread.updatedAt) ?? Number.NEGATIVE_INFINITY
     );
   }
-  return getFirstSortableTimestamp(thread.updatedAt, thread.createdAt) ?? Number.NEGATIVE_INFINITY;
+
+  const projectedUserActivity = toSortableTimestamp(thread.latestUserMessageAt ?? undefined);
+  if (projectedUserActivity !== null) {
+    return projectedUserActivity;
+  }
+
+  let latestLoadedUserActivity: number | null = null;
+  for (const message of thread.messages ?? []) {
+    if (message.role !== "user") continue;
+    const messageTimestamp = toSortableTimestamp(message.createdAt);
+    if (messageTimestamp === null) continue;
+    latestLoadedUserActivity = Math.max(
+      latestLoadedUserActivity ?? Number.NEGATIVE_INFINITY,
+      messageTimestamp,
+    );
+  }
+
+  if (latestLoadedUserActivity !== null) {
+    return latestLoadedUserActivity;
+  }
+
+  // Threads without user activity remain anchored to their creation time.
+  // updatedAt also changes for assistant output, status, and title updates,
+  // so using it here would make those non-user events reorder the sidebar.
+  return toSortableTimestamp(thread.createdAt) ?? Number.NEGATIVE_INFINITY;
 }
 
 export function sortThreads<T extends { readonly id: string } & ThreadSortInput>(

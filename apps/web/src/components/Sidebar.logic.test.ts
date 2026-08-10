@@ -713,35 +713,43 @@ describe("searchSidebarThreadsByTitle", () => {
 });
 
 describe("sortThreadsForSidebarV2", () => {
-  const sortable = (input: { id: string; createdAt: string; updatedAt?: string }) => ({
+  const sortable = (input: {
+    id: string;
+    createdAt: string;
+    updatedAt?: string;
+    latestUserMessageAt?: string | null;
+  }) => ({
     id: input.id,
     createdAt: input.createdAt,
     updatedAt: input.updatedAt ?? input.createdAt,
+    latestUserMessageAt: input.latestUserMessageAt ?? null,
   });
 
-  it("orders by the latest meaningful update, not creation time", () => {
+  it("orders by latest user activity without reacting to assistant or metadata updates", () => {
     const sorted = sortThreadsForSidebarV2([
       sortable({
-        id: "updated-after-assistant-output",
+        id: "updated-after-assistant-output-and-rename",
         createdAt: "2026-03-09T08:00:00.000Z",
         updatedAt: "2026-03-09T13:00:00.000Z",
+        latestUserMessageAt: "2026-03-09T09:00:00.000Z",
       }),
       sortable({
-        id: "newest-created",
-        createdAt: "2026-03-09T12:00:00.000Z",
-        updatedAt: "2026-03-09T12:00:00.000Z",
+        id: "newest-user-activity",
+        createdAt: "2026-03-09T10:00:00.000Z",
+        updatedAt: "2026-03-09T10:30:00.000Z",
+        latestUserMessageAt: "2026-03-09T10:30:00.000Z",
       }),
-      sortable({ id: "middle", createdAt: "2026-03-09T10:00:00.000Z" }),
+      sortable({ id: "no-user-activity", createdAt: "2026-03-09T09:30:00.000Z" }),
     ]);
 
     expect(sorted.map((thread) => thread.id)).toEqual([
-      "updated-after-assistant-output",
-      "newest-created",
-      "middle",
+      "newest-user-activity",
+      "no-user-activity",
+      "updated-after-assistant-output-and-rename",
     ]);
   });
 
-  it("falls back to creation time and then id so ties are stable", () => {
+  it("falls back to creation time and then id so missing activity remains stable", () => {
     const sorted = sortThreadsForSidebarV2([
       sortable({
         id: "b",
@@ -1238,7 +1246,7 @@ describe("getFallbackThreadIdAfterDelete", () => {
   });
 });
 describe("sortProjectsForSidebar", () => {
-  it("sorts projects by the most recent meaningful update across their threads", () => {
+  it("sorts projects by the most recent user activity across their threads", () => {
     const projects = [
       makeProject({ id: ProjectId.make("project-1"), title: "Older project" }),
       makeProject({ id: ProjectId.make("project-2"), title: "Newer project" }),
@@ -1280,8 +1288,8 @@ describe("sortProjectsForSidebar", () => {
     const sorted = sortProjectsForSidebar(projects, threads, "updated_at");
 
     expect(sorted.map((project) => project.id)).toEqual([
-      ProjectId.make("project-1"),
       ProjectId.make("project-2"),
+      ProjectId.make("project-1"),
     ]);
   });
 
@@ -1364,12 +1372,15 @@ describe("sortProjectsForSidebar", () => {
         }),
       ],
       [
-        makeThread({
-          id: ThreadId.make("thread-visible"),
-          projectId: ProjectId.make("project-1"),
-          updatedAt: "2026-03-09T10:02:00.000Z",
-          archivedAt: null,
-        }),
+        {
+          ...makeThread({
+            id: ThreadId.make("thread-visible"),
+            projectId: ProjectId.make("project-1"),
+            updatedAt: "2026-03-09T10:02:00.000Z",
+            archivedAt: null,
+          }),
+          latestUserMessageAt: "2026-03-09T10:02:00.000Z",
+        },
         makeThread({
           id: ThreadId.make("thread-archived"),
           projectId: ProjectId.make("project-2"),
@@ -1414,16 +1425,22 @@ describe("sortScopedProjectsForSidebar", () => {
       }),
     ];
     const threads = [
-      makeThread({
-        environmentId: localEnvironmentId,
-        projectId: sharedProjectId,
-        updatedAt: "2026-03-09T10:02:00.000Z",
-      }),
-      makeThread({
-        environmentId: remoteEnvironmentId,
-        projectId: sharedProjectId,
-        updatedAt: "2026-03-09T10:10:00.000Z",
-      }),
+      {
+        ...makeThread({
+          environmentId: localEnvironmentId,
+          projectId: sharedProjectId,
+          updatedAt: "2026-03-09T10:02:00.000Z",
+        }),
+        latestUserMessageAt: "2026-03-09T10:02:00.000Z",
+      },
+      {
+        ...makeThread({
+          environmentId: remoteEnvironmentId,
+          projectId: sharedProjectId,
+          updatedAt: "2026-03-09T10:10:00.000Z",
+        }),
+        latestUserMessageAt: "2026-03-09T10:10:00.000Z",
+      },
     ];
 
     const sorted = sortScopedProjectsForSidebar(projects, threads, "updated_at");
@@ -1445,17 +1462,23 @@ describe("sortScopedProjectsForSidebar", () => {
       }),
     ];
     const threads = [
-      makeThread({
-        id: ThreadId.make("thread-visible"),
-        projectId: ProjectId.make("project-visible"),
-        updatedAt: "2026-03-09T10:02:00.000Z",
-      }),
-      makeThread({
-        id: ThreadId.make("thread-archived"),
-        projectId: ProjectId.make("project-archived"),
-        updatedAt: "2026-03-09T10:10:00.000Z",
-        archivedAt: "2026-03-09T10:11:00.000Z",
-      }),
+      {
+        ...makeThread({
+          id: ThreadId.make("thread-visible"),
+          projectId: ProjectId.make("project-visible"),
+          updatedAt: "2026-03-09T10:02:00.000Z",
+        }),
+        latestUserMessageAt: "2026-03-09T10:02:00.000Z",
+      },
+      {
+        ...makeThread({
+          id: ThreadId.make("thread-archived"),
+          projectId: ProjectId.make("project-archived"),
+          updatedAt: "2026-03-09T10:10:00.000Z",
+          archivedAt: "2026-03-09T10:11:00.000Z",
+        }),
+        latestUserMessageAt: "2026-03-09T10:10:00.000Z",
+      },
     ];
 
     const sorted = sortScopedProjectsForSidebar(projects, threads, "updated_at");
@@ -1484,15 +1507,21 @@ describe("sortLogicalProjectsForSidebar", () => {
       },
     ];
     const threads = [
-      makeThread({
-        projectId: olderProjectId,
-        updatedAt: "2026-03-09T10:01:00.000Z",
-      }),
-      makeThread({
-        id: ThreadId.make("thread-newer"),
-        projectId: newerProjectId,
-        updatedAt: "2026-03-09T10:05:00.000Z",
-      }),
+      {
+        ...makeThread({
+          projectId: olderProjectId,
+          updatedAt: "2026-03-09T10:01:00.000Z",
+        }),
+        latestUserMessageAt: "2026-03-09T10:01:00.000Z",
+      },
+      {
+        ...makeThread({
+          id: ThreadId.make("thread-newer"),
+          projectId: newerProjectId,
+          updatedAt: "2026-03-09T10:05:00.000Z",
+        }),
+        latestUserMessageAt: "2026-03-09T10:05:00.000Z",
+      },
     ];
 
     expect(sortLogicalProjectsForSidebar(projects, threads, "manual")).toEqual(projects);
