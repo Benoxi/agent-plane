@@ -1,4 +1,4 @@
-import { memo, type PointerEventHandler, useEffect, useState } from "react";
+import { memo, type FormEvent, type PointerEventHandler, useEffect, useState } from "react";
 import { ChevronDownIcon, ChevronLeftIcon, Clock3Icon } from "lucide-react";
 import { useEnvironmentIdentificationMode } from "~/hooks/useSettings";
 import { cn } from "~/lib/utils";
@@ -34,7 +34,7 @@ interface ComposerPrimaryActionsProps {
   onPreviousPendingQuestion: () => void;
   onInterrupt: () => void;
   onImplementPlanInNewThread: () => void;
-  onSchedule: (delaySeconds: number) => void;
+  onSchedule: (delaySeconds: number) => void | Promise<void>;
 }
 
 export const formatPendingPrimaryActionLabel = (input: {
@@ -53,6 +53,15 @@ export const formatPendingPrimaryActionLabel = (input: {
     return "Next question";
   }
   return input.questionIndex > 0 ? "Submit answers" : "Submit answer";
+};
+
+export const preventScheduledMessageSubmitPropagation = (
+  event: Pick<FormEvent<HTMLFormElement>, "preventDefault" | "stopPropagation">,
+) => {
+  event.preventDefault();
+  // The popover is portalled out of the composer form in the DOM, but React
+  // events still bubble through the component tree.
+  event.stopPropagation();
 };
 
 const preventPointerFocus: PointerEventHandler<HTMLElement> = (event) => {
@@ -240,11 +249,11 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
           <form
             className="space-y-3"
             onSubmit={(event) => {
-              event.preventDefault();
+              preventScheduledMessageSubmitPropagation(event);
               if (!Number.isFinite(parsedDelaySeconds) || parsedDelaySeconds <= 0) {
                 return;
               }
-              onSchedule(parsedDelaySeconds);
+              void onSchedule(parsedDelaySeconds);
               setScheduleOpen(false);
             }}
           >

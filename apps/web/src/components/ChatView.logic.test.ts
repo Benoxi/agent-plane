@@ -21,6 +21,7 @@ import {
   dismissBranchMismatchForSession,
   getStartedThreadModelChangeBlockReason,
   hasServerAcknowledgedLocalDispatch,
+  isComposerPayloadSnapshotCurrent,
   isBranchMismatchDismissedForSession,
   reconcileMountedTerminalThreadIds,
   reconcileRetainedMountedThreadIds,
@@ -35,6 +36,36 @@ const environmentId = EnvironmentId.make("environment-local");
 const projectId = ProjectId.make("project-1");
 const threadId = ThreadId.make("thread-1");
 const now = "2026-03-29T00:00:00.000Z";
+
+describe("isComposerPayloadSnapshotCurrent", () => {
+  it("only clears a scheduled snapshot when the composer stayed unchanged", () => {
+    const snapshot = {
+      snapshotPrompt: "Review this",
+      snapshotItemIds: [["image-1"], ["terminal-1"], [], [], []],
+    };
+    expect(
+      isComposerPayloadSnapshotCurrent({
+        ...snapshot,
+        currentPrompt: "Review this",
+        currentItemIds: [["image-1"], ["terminal-1"], [], [], []],
+      }),
+    ).toBe(true);
+    expect(
+      isComposerPayloadSnapshotCurrent({
+        ...snapshot,
+        currentPrompt: "Review this and the new edit",
+        currentItemIds: [["image-1"], ["terminal-1"], [], [], []],
+      }),
+    ).toBe(false);
+    expect(
+      isComposerPayloadSnapshotCurrent({
+        ...snapshot,
+        currentPrompt: "Review this",
+        currentItemIds: [["image-1", "image-2"], ["terminal-1"], [], [], []],
+      }),
+    ).toBe(false);
+  });
+});
 
 function makeThread(overrides: Partial<Thread> = {}): Thread {
   return {

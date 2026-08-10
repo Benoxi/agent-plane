@@ -17,9 +17,9 @@ import { useEnvironments } from "../state/environments";
 import { readThreadShell } from "../state/entities";
 import { threadEnvironment } from "../state/threads";
 import { useAtomCommand } from "../state/use-atom-command";
-import { createStartedThreadTextTurnInput } from "../threadSendExecution";
 import {
   canDispatchScheduledMessageToPhase,
+  createScheduledMessageTurnInput,
   shouldRetryFailedScheduledDispatch,
 } from "../scheduledMessageDispatch";
 
@@ -106,14 +106,7 @@ export function ScheduledMessageCoordinator() {
 
         const startResult = await startThreadTurn({
           environmentId: item.environmentId,
-          input: createStartedThreadTextTurnInput({
-            threadId: item.threadId,
-            text: item.outgoingText,
-            modelSelection: item.modelSelection,
-            titleSeed: item.titleSeed,
-            runtimeMode: item.runtimeMode,
-            interactionMode: item.interactionMode,
-          }).input,
+          input: createScheduledMessageTurnInput(item),
         });
 
         inFlightMessageIdsRef.current.delete(item.id);

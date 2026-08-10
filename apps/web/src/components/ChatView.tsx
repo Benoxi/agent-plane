@@ -273,6 +273,7 @@ import {
   deriveComposerSendState,
   dismissBranchMismatchForSession,
   hasServerAcknowledgedLocalDispatch,
+  isComposerPayloadSnapshotCurrent,
   isBranchMismatchDismissedForSession,
   shouldShowBranchMismatchBanner,
   getStartedThreadModelChangeBlockReason,
@@ -5150,8 +5151,10 @@ function ChatViewContent(props: ChatViewProps) {
   };
 
   const onScheduleMessage = useCallback(
-    (delaySeconds: number) => {
-      if (!activeThread || !isServerThread) return;
+    async (delaySeconds: number) => {
+      if (!activeThread || !isServerThread) {
+        return;
+      }
 
       const sendCtx = composerRef.current?.getSendContext();
       if (!sendCtx) return;
@@ -5169,7 +5172,12 @@ function ChatViewContent(props: ChatViewProps) {
         selectedModelSelection: ctxSelectedModelSelection,
       } = sendCtx;
       const promptForSend = promptRef.current;
-      const { trimmedPrompt } = deriveComposerSendState({
+      const {
+        trimmedPrompt: trimmed,
+        sendableTerminalContexts: sendableComposerTerminalContexts,
+        expiredTerminalContextCount,
+        hasSendableContent,
+      } = deriveComposerSendState({
         prompt: promptForSend,
         imageCount: composerImages.length,
         terminalContexts: composerTerminalContexts,
@@ -5178,38 +5186,169 @@ function ChatViewContent(props: ChatViewProps) {
           composerPreviewAnnotations.length +
           composerReviewComments.length,
       });
-      if (
-        trimmedPrompt.length === 0 ||
-        composerImages.length > 0 ||
-        composerTerminalContexts.length > 0 ||
-        composerElementContexts.length > 0 ||
-        composerPreviewAnnotations.length > 0 ||
-        composerReviewComments.length > 0
-      ) {
+      const standaloneSlashCommand =
+        composerImages.length === 0 &&
+        sendableComposerTerminalContexts.length === 0 &&
+        composerElementContexts.length === 0 &&
+        composerPreviewAnnotations.length === 0 &&
+        composerReviewComments.length === 0
+          ? parseStandaloneComposerSlashCommand(trimmed)
+          : null;
+      if (standaloneSlashCommand) {
+        setThreadError(activeThread.id, "Run slash commands immediately before scheduling.");
         return;
       }
 
-      const scheduledMessage = scheduleThreadMessage({
-        environmentId: activeThread.environmentId,
-        threadId: activeThread.id,
-        text: trimmedPrompt,
-        outgoingText: formatOutgoingPrompt({
-          provider: ctxSelectedProvider,
-          model: ctxSelectedModel,
-          models: ctxSelectedProviderModels,
-          effort: ctxSelectedPromptEffort,
-          text: trimmedPrompt,
-        }),
-        titleSeed: activeThread.title,
-        modelSelection: ctxSelectedModelSelection,
-        runtimeMode,
-        interactionMode,
-        delaySeconds,
-      });
+      if (!hasSendableContent) {
+        if (expiredTerminalContextCount > 0) {
+          const toastCopy = buildExpiredTerminalContextToastCopy(
+            expiredTerminalContextCount,
+            "empty",
+          );
+          toastManager.add(
+            stackedThreadToast({
+              type: "warning",
+              title: toastCopy.title,
+              description: toastCopy.description,
+            }),
+          );
+        }
+        return;
+      }
 
-      promptRef.current = "";
-      clearComposerDraftContent(composerDraftTarget);
-      composerRef.current?.resetCursorState();
+      const composerImagesSnapshot = [...composerImages];
+      const composerTerminalContextIdsSnapshot = composerTerminalContexts.map((item) => item.id);
+      const composerTerminalContextsSnapshot = [...sendableComposerTerminalContexts];
+      const composerElementContextsSnapshot = [...composerElementContexts];
+      const composerPreviewAnnotationsSnapshot = [...composerPreviewAnnotations];
+      const composerReviewCommentsSnapshot: ReviewCommentContext[] = [...composerReviewComments];
+      const messageTextWithContexts = appendElementContextsToPrompt(
+        appendTerminalContextsToPrompt(promptForSend, composerTerminalContextsSnapshot),
+        composerElementContextsSnapshot,
+      );
+      const messageTextWithPreviewAnnotations = composerPreviewAnnotationsSnapshot.reduce(
+        (text, annotation) => appendPreviewAnnotationPrompt(text, annotation),
+        messageTextWithContexts,
+      );
+      const messageTextForSend = appendReviewCommentsToPrompt(
+        messageTextWithPreviewAnnotations,
+        composerReviewCommentsSnapshot,
+      );
+      const attachmentsResult = await settlePromise(() =>
+        Promise.all(
+          composerImagesSnapshot.map(async (image) => ({
+            type: "image" as const,
+            name: image.name,
+            mimeType: image.mimeType,
+            sizeBytes: image.sizeBytes,
+            dataUrl: await readFileAsDataUrl(image.file),
+          })),
+        ),
+      );
+      if (attachmentsResult._tag === "Failure") {
+        const error = squashAtomCommandFailure(attachmentsResult);
+        setThreadError(
+          activeThread.id,
+          error instanceof Error ? error.message : "Failed to prepare scheduled attachments.",
+        );
+        return;
+      }
+
+      let firstComposerImageName: string | null = null;
+      if (composerImagesSnapshot.length > 0) {
+        const firstComposerImage = composerImagesSnapshot[0];
+        if (firstComposerImage) {
+          firstComposerImageName = firstComposerImage.name;
+        }
+      }
+      let titleSeed = trimmed;
+      if (!titleSeed) {
+        if (firstComposerImageName) {
+          titleSeed = `Image: ${firstComposerImageName}`;
+        } else if (composerTerminalContextsSnapshot.length > 0) {
+          titleSeed = formatTerminalContextLabel(composerTerminalContextsSnapshot[0]!);
+        } else if (composerElementContextsSnapshot.length > 0) {
+          titleSeed = formatElementContextLabel(composerElementContextsSnapshot[0]!);
+        } else {
+          titleSeed = "New thread";
+        }
+      }
+      let scheduledMessage;
+      try {
+        scheduledMessage = scheduleThreadMessage({
+          environmentId: activeThread.environmentId,
+          threadId: activeThread.id,
+          text: trimmed,
+          outgoingText: formatOutgoingPrompt({
+            provider: ctxSelectedProvider,
+            model: ctxSelectedModel,
+            models: ctxSelectedProviderModels,
+            effort: ctxSelectedPromptEffort,
+            text: messageTextForSend || IMAGE_ONLY_BOOTSTRAP_PROMPT,
+          }),
+          attachments: attachmentsResult.value,
+          summary: {
+            imageCount: composerImagesSnapshot.length,
+            terminalContextCount: composerTerminalContextsSnapshot.length,
+            elementContextCount: composerElementContextsSnapshot.length,
+            previewAnnotationCount: composerPreviewAnnotationsSnapshot.length,
+            reviewCommentCount: composerReviewCommentsSnapshot.length,
+          },
+          titleSeed: truncate(titleSeed),
+          modelSelection: ctxSelectedModelSelection,
+          runtimeMode,
+          interactionMode,
+          delaySeconds,
+        });
+      } catch (error) {
+        setThreadError(
+          activeThread.id,
+          error instanceof Error
+            ? `Could not persist scheduled message: ${error.message}`
+            : "Could not persist scheduled message. Free browser storage and try again.",
+        );
+        return;
+      }
+      if (expiredTerminalContextCount > 0) {
+        const toastCopy = buildExpiredTerminalContextToastCopy(
+          expiredTerminalContextCount,
+          "omitted",
+        );
+        toastManager.add(
+          stackedThreadToast({
+            type: "warning",
+            title: toastCopy.title,
+            description: toastCopy.description,
+          }),
+        );
+      }
+
+      const currentSendCtx = composerRef.current?.getSendContext();
+      const capturedPayloadIsStillCurrent =
+        currentSendCtx !== undefined &&
+        isComposerPayloadSnapshotCurrent({
+          snapshotPrompt: promptForSend,
+          currentPrompt: promptRef.current,
+          snapshotItemIds: [
+            composerImagesSnapshot.map((item) => item.id),
+            composerTerminalContextIdsSnapshot,
+            composerElementContextsSnapshot.map((item) => item.id),
+            composerPreviewAnnotationsSnapshot.map((item) => item.id),
+            composerReviewCommentsSnapshot.map((item) => item.id),
+          ],
+          currentItemIds: [
+            currentSendCtx.images.map((item) => item.id),
+            currentSendCtx.terminalContexts.map((item) => item.id),
+            currentSendCtx.elementContexts.map((item) => item.id),
+            currentSendCtx.previewAnnotations.map((item) => item.id),
+            currentSendCtx.reviewComments.map((item) => item.id),
+          ],
+        });
+      if (capturedPayloadIsStillCurrent) {
+        promptRef.current = "";
+        clearComposerDraftContent(composerDraftTarget);
+        composerRef.current?.resetCursorState();
+      }
       setThreadError(activeThread.id, null);
       toastManager.add(
         stackedThreadToast({
@@ -5228,6 +5367,7 @@ function ChatViewContent(props: ChatViewProps) {
       isServerThread,
       runtimeMode,
       setThreadError,
+      toastManager,
     ],
   );
 

@@ -564,3 +564,21 @@ export function hasServerAcknowledgedLocalDispatch(input: {
     input.localDispatch.sessionUpdatedAt !== (session?.updatedAt ?? null)
   );
 }
+
+export function isComposerPayloadSnapshotCurrent(input: {
+  snapshotPrompt: string;
+  currentPrompt: string;
+  snapshotItemIds: ReadonlyArray<ReadonlyArray<string>>;
+  currentItemIds: ReadonlyArray<ReadonlyArray<string>>;
+}): boolean {
+  if (input.snapshotPrompt !== input.currentPrompt) return false;
+  if (input.snapshotItemIds.length !== input.currentItemIds.length) return false;
+  return input.snapshotItemIds.every((snapshotIds, groupIndex) => {
+    const currentIds = input.currentItemIds[groupIndex];
+    return (
+      currentIds !== undefined &&
+      snapshotIds.length === currentIds.length &&
+      snapshotIds.every((id, itemIndex) => id === currentIds[itemIndex])
+    );
+  });
+}

@@ -1,5 +1,19 @@
 import type { SessionPhase } from "./types";
 import type { EnvironmentConnectionPhase } from "@t3tools/client-runtime/connection";
+import type { ScheduledMessage } from "./scheduledMessageStore";
+import { createStartedThreadTextTurnInput } from "./threadSendExecution";
+
+export function createScheduledMessageTurnInput(item: ScheduledMessage) {
+  return createStartedThreadTextTurnInput({
+    threadId: item.threadId,
+    text: item.outgoingText,
+    attachments: item.attachments ?? [],
+    modelSelection: item.modelSelection,
+    titleSeed: item.titleSeed,
+    runtimeMode: item.runtimeMode,
+    interactionMode: item.interactionMode,
+  }).input;
+}
 
 /**
  * A stopped or missing provider session is dispatchable: starting a turn is
