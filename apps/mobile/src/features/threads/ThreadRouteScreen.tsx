@@ -23,7 +23,10 @@ import {
 } from "../../components/AndroidScreenHeader";
 import { LoadingScreen } from "../../components/LoadingScreen";
 import { scopedThreadKey } from "../../lib/scopedEntities";
-import { formatMobileConversationForClipboard } from "../../lib/conversationCopy";
+import {
+  formatMobileConversationForClipboard,
+  mobileConversationHasCopyableContent,
+} from "../../lib/conversationCopy";
 import { copyTextWithHaptic } from "../../lib/copyTextWithHaptic";
 import { NATIVE_LIQUID_GLASS_SUPPORTED } from "../../native/native-glass";
 import { connectionTone } from "../connection/connectionTone";
@@ -283,15 +286,25 @@ function ThreadRouteContent(
 
   /* ─── Native header theming ──────────────────────────────────────── */
   const usesNativeHeaderGlass = NATIVE_LIQUID_GLASS_SUPPORTED;
-  const conversationCopyText = useMemo(
-    () =>
-      formatMobileConversationForClipboard({
-        title: selectedThread?.title ?? "Conversation",
-        entries: composer.selectedThreadFeed,
-      }),
-    [composer.selectedThreadFeed, selectedThread?.title],
+  const canCopyConversation = useMemo(
+    () => mobileConversationHasCopyableContent(composer.selectedThreadFeed),
+    [composer.selectedThreadFeed],
   );
   const handleCopyConversation = useCallback(() => {
+    let conversationCopyText: string;
+    try {
+      conversationCopyText = formatMobileConversationForClipboard({
+        title: selectedThread?.title ?? "Conversation",
+        entries: composer.selectedThreadFeed,
+      });
+    } catch {
+      setConversationCopied(false);
+      Alert.alert(
+        "Couldn't copy conversation",
+        "The conversation couldn't be prepared for copying. Try again.",
+      );
+      return;
+    }
     if (!conversationCopyText) return;
     void copyTextWithHaptic(conversationCopyText, { target: "conversation" }).then((didCopy) => {
       if (!didCopy) {
@@ -304,7 +317,7 @@ function ThreadRouteContent(
       }
       setConversationCopied(true);
     });
-  }, [conversationCopyText]);
+  }, [composer.selectedThreadFeed, selectedThread?.title]);
   useEffect(() => {
     if (!conversationCopied) return;
     const timeoutId = setTimeout(() => setConversationCopied(false), 1_200);
@@ -653,7 +666,7 @@ function ThreadRouteContent(
     () =>
       withNativeGlassHeaderItem({
         accessibilityLabel: conversationCopied ? "Copied conversation" : "Copy conversation",
-        disabled: conversationCopyText.length === 0,
+        disabled: !canCopyConversation,
         icon: {
           name: conversationCopied ? "checkmark" : "doc.on.doc",
           type: "sfSymbol" as const,
@@ -662,7 +675,7 @@ function ThreadRouteContent(
         onPress: handleCopyConversation,
         type: "button" as const,
       }),
-    [conversationCopied, conversationCopyText.length, handleCopyConversation],
+    [canCopyConversation, conversationCopied, handleCopyConversation],
   );
   const splitRightHeaderItems = useMemo<NativeHeaderItems>(
     () => [copyConversationHeaderItem, ...threadCenterHeaderItems],
@@ -730,7 +743,7 @@ function ThreadRouteContent(
         ? { ios: "checkmark", android: "check" }
         : { ios: "doc.on.doc", android: "content_copy" },
       onPress: handleCopyConversation,
-      disabled: conversationCopyText.length === 0,
+      disabled: !canCopyConversation,
     });
     if (selectedThreadCwd !== null) {
       actions.push({
@@ -762,7 +775,7 @@ function ThreadRouteContent(
   }, [
     fileInspector.supported,
     conversationCopied,
-    conversationCopyText.length,
+    canCopyConversation,
     handleCopyConversation,
     handleOpenFilesInspector,
     handleOpenTerminal,
