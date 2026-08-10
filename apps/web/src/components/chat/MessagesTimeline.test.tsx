@@ -302,6 +302,8 @@ describe("MessagesTimeline", () => {
     const {
       resolveTimelineIsAtEnd,
       shouldCancelTimelineLiveFollow,
+      shouldKeepTimelineJumpPending,
+      shouldPositionTimelineAnchor,
       TIMELINE_EXACT_END_THRESHOLD,
       resolveTimelineMinimapHasPersistentGutter,
       resolveTimelineMinimapHeightStyle,
@@ -311,14 +313,32 @@ describe("MessagesTimeline", () => {
       resolveTimelineMinimapTopPercent,
     } = await import("./MessagesTimeline.logic");
 
-    expect(resolveTimelineIsAtEnd({ isNearEnd: true, isAtEnd: false })).toBe(false);
-    expect(resolveTimelineIsAtEnd({ isNearEnd: false, isAtEnd: true })).toBe(true);
-    expect(resolveTimelineIsAtEnd({ isAtEnd: true })).toBe(true);
+    expect(
+      resolveTimelineIsAtEnd({
+        isNearEnd: true,
+        isAtEnd: true,
+        isWithinMaintainScrollAtEndThreshold: false,
+      }),
+    ).toBe(false);
+    expect(
+      resolveTimelineIsAtEnd({
+        isNearEnd: false,
+        isAtEnd: false,
+        isWithinMaintainScrollAtEndThreshold: true,
+      }),
+    ).toBe(true);
+    expect(resolveTimelineIsAtEnd({ isAtEnd: true })).toBeUndefined();
     expect(resolveTimelineIsAtEnd(undefined)).toBeUndefined();
     expect(TIMELINE_EXACT_END_THRESHOLD).toBe(0);
     expect(shouldCancelTimelineLiveFollow(true)).toBe(false);
     expect(shouldCancelTimelineLiveFollow(false)).toBe(true);
     expect(shouldCancelTimelineLiveFollow(undefined)).toBe(true);
+    expect(shouldPositionTimelineAnchor("message-1", "message-1", true, true)).toBe(true);
+    expect(shouldPositionTimelineAnchor(null, "message-1", true, true)).toBe(false);
+    expect(shouldPositionTimelineAnchor("message-1", "message-1", true, false)).toBe(false);
+    expect(shouldKeepTimelineJumpPending(undefined)).toBe(true);
+    expect(shouldKeepTimelineJumpPending(false)).toBe(true);
+    expect(shouldKeepTimelineJumpPending(true)).toBe(false);
 
     expect(resolveTimelineMinimapHeightStyle(5)).toBe("min(32px, calc(100vh - 18rem))");
     expect(resolveTimelineMinimapTopPercent(2, 5)).toBe(50);
@@ -397,12 +417,26 @@ describe("MessagesTimeline", () => {
       isTimelineAutoScrollEnabled,
       shouldAutoScrollTimeline,
       shouldCancelTimelineLiveFollow,
+      shouldPositionTimelineAnchor,
     } = await import("./MessagesTimeline.logic");
 
     expect(isTimelineAutoScrollEnabled("strict")).toBe(true);
     expect(isTimelineAutoScrollEnabled("disabled")).toBe(false);
     expect(shouldAutoScrollTimeline(true, true, "disabled")).toBe(false);
     expect(shouldCancelTimelineLiveFollow(true, "disabled")).toBe(true);
+    expect(shouldPositionTimelineAnchor("message-1", "message-1", true, true, "disabled")).toBe(
+      false,
+    );
+  });
+
+  it("does not activate a jump follow-lock until exact-bottom confirmation", async () => {
+    const { shouldAutoScrollTimeline } = await import("./MessagesTimeline.logic");
+
+    const beforeAnimatedJumpCompletes = shouldAutoScrollTimeline(false, true);
+    const afterExactBottomConfirmation = shouldAutoScrollTimeline(true, true);
+
+    expect(beforeAnimatedJumpCompletes).toBe(false);
+    expect(afterExactBottomConfirmation).toBe(true);
   });
 
   it("anchors a sent attachment message using its measured height", () => {

@@ -27,10 +27,11 @@ export const TIMELINE_AUTO_SCROLL_MODE: TimelineAutoScrollMode = "strict";
 export interface TimelineEndState {
   readonly isAtEnd?: boolean;
   readonly isNearEnd?: boolean;
+  readonly isWithinMaintainScrollAtEndThreshold?: boolean;
 }
 
 export function resolveTimelineIsAtEnd(state: TimelineEndState | undefined): boolean | undefined {
-  return state?.isAtEnd;
+  return state?.isWithinMaintainScrollAtEndThreshold;
 }
 
 export function isTimelineAutoScrollEnabled(mode: TimelineAutoScrollMode): boolean {
@@ -50,6 +51,22 @@ export function shouldCancelTimelineLiveFollow(
   mode: TimelineAutoScrollMode = TIMELINE_AUTO_SCROLL_MODE,
 ): boolean {
   return !shouldAutoScrollTimeline(isAtEnd, true, mode);
+}
+
+export function shouldPositionTimelineAnchor(
+  pendingMessageId: string | null,
+  readyMessageId: string,
+  isAtEnd: boolean | undefined,
+  liveFollowActive: boolean,
+  mode: TimelineAutoScrollMode = TIMELINE_AUTO_SCROLL_MODE,
+): boolean {
+  return (
+    pendingMessageId === readyMessageId && shouldAutoScrollTimeline(isAtEnd, liveFollowActive, mode)
+  );
+}
+
+export function shouldKeepTimelineJumpPending(isAtEnd: boolean | undefined): boolean {
+  return isAtEnd !== true;
 }
 
 export function isTimelineLiveFollowActive(
