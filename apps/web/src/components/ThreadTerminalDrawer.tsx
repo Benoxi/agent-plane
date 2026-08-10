@@ -18,6 +18,7 @@ import {
   type ThreadId,
 } from "@t3tools/contracts";
 import { getTerminalLabel } from "@t3tools/shared/terminalLabels";
+import * as Schema from "effect/Schema";
 import {
   type PointerEvent as ReactPointerEvent,
   type ReactNode,
@@ -57,6 +58,7 @@ import {
 } from "../types";
 import { readLocalApi } from "~/localApi";
 import { useClientSettings } from "../hooks/useSettings";
+import { useLocalStorage } from "../hooks/useLocalStorage";
 import { useAttachedTerminalSession } from "../state/terminalSessions";
 import { serverEnvironment } from "../state/server";
 import { previewEnvironment } from "../state/preview";
@@ -64,6 +66,11 @@ import { terminalEnvironment } from "../state/terminal";
 import { openTerminalLinkInPreview } from "./preview/openTerminalLinkInPreview";
 import { useAtomCommand } from "../state/use-atom-command";
 import { preventTerminalCloseShortcut } from "../lib/terminalCloseShortcut";
+import {
+  resolveTerminalFontPreference,
+  resolveTerminalFontSizePreference,
+  TYPOGRAPHY_ADVANCED_STORAGE_KEY,
+} from "../appearanceFonts";
 
 const MIN_DRAWER_HEIGHT = 180;
 const MAX_DRAWER_HEIGHT_RATIO = 0.75;
@@ -241,6 +248,7 @@ export function shouldHandleTerminalExit(
 }
 
 interface TerminalViewportProps {
+  advancedTypography: boolean;
   threadRef: ScopedThreadRef;
   threadId: ThreadId;
   terminalId: string;
@@ -264,6 +272,7 @@ interface TerminalLaunchLocation {
 }
 
 export function TerminalViewport({
+  advancedTypography,
   threadRef,
   threadId,
   terminalId,
@@ -312,12 +321,20 @@ export function TerminalViewport({
     onAddTerminalContext(selection);
   });
   const readTerminalLabel = useEffectEvent(() => terminalLabel);
-  // The terminal inherits the monospace (code) preference unless it has an
-  // override of its own, so one font choice drives every mono surface.
-  const terminalFontFamily = useClientSettings(
-    (settings) => settings.fontFamilyTerminal.trim() || settings.fontFamilyCode,
+  const terminalFontFamily = useClientSettings((settings) =>
+    resolveTerminalFontPreference({
+      advanced: advancedTypography,
+      code: settings.fontFamilyCode,
+      terminal: settings.fontFamilyTerminal,
+    }),
   );
-  const terminalFontSize = useClientSettings((settings) => settings.fontSizeTerminal);
+  const terminalFontSize = useClientSettings((settings) =>
+    resolveTerminalFontSizePreference({
+      advanced: advancedTypography,
+      code: settings.fontSizeCode,
+      terminal: settings.fontSizeTerminal,
+    }),
+  );
   const terminalFontRef = useRef({ family: terminalFontFamily, size: terminalFontSize });
   const terminalSession = useAttachedTerminalSession({
     environmentId,
@@ -921,6 +938,11 @@ export default function ThreadTerminalDrawer({
   terminalLaunchLocationsById,
 }: ThreadTerminalDrawerProps) {
   const isPanel = mode === "panel";
+  const [advancedTypography] = useLocalStorage(
+    TYPOGRAPHY_ADVANCED_STORAGE_KEY,
+    false,
+    Schema.Boolean,
+  );
   const controlledDrawerHeight = clampDrawerHeight(height);
   const [drawerHeightState, setDrawerHeightState] = useState(() => ({
     threadId,
@@ -1357,6 +1379,7 @@ export default function ThreadTerminalDrawer({
                     >
                       <div className="h-full p-1">
                         <TerminalViewport
+                          advancedTypography={advancedTypography}
                           threadRef={threadRef}
                           threadId={threadId}
                           terminalId={terminalId}
@@ -1384,6 +1407,7 @@ export default function ThreadTerminalDrawer({
             ) : (
               <div className="h-full p-1">
                 <TerminalViewport
+                  advancedTypography={advancedTypography}
                   key={resolvedActiveTerminalId}
                   threadRef={threadRef}
                   threadId={threadId}
