@@ -1,6 +1,21 @@
-import { describe, expect, it } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
 
-import { formatPendingPrimaryActionLabel } from "./ComposerPrimaryActions";
+import {
+  formatPendingPrimaryActionLabel,
+  preventScheduledMessageSubmitPropagation,
+} from "./ComposerPrimaryActions";
+
+describe("preventScheduledMessageSubmitPropagation", () => {
+  it("prevents a portalled schedule submit from reaching the composer form", () => {
+    const preventDefault = vi.fn();
+    const stopPropagation = vi.fn();
+
+    preventScheduledMessageSubmitPropagation({ preventDefault, stopPropagation });
+
+    expect(preventDefault).toHaveBeenCalledOnce();
+    expect(stopPropagation).toHaveBeenCalledOnce();
+  });
+});
 
 describe("formatPendingPrimaryActionLabel", () => {
   it("returns 'Submitting...' while responding", () => {
