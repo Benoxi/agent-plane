@@ -8,7 +8,7 @@ import type { PendingUserInput, PendingUserInputDraftAnswer } from "../../lib/th
 export interface PendingUserInputCardProps {
   readonly pendingUserInput: PendingUserInput;
   readonly drafts: Record<string, PendingUserInputDraftAnswer>;
-  readonly answers: Record<string, string> | null;
+  readonly answers: Record<string, string | string[]> | null;
   readonly respondingUserInputId: ApprovalRequestId | null;
   readonly onSelectOption: (
     requestId: ApprovalRequestId,
@@ -34,6 +34,7 @@ export function PendingUserInputCard(props: PendingUserInputCardProps) {
       </Text>
       {props.pendingUserInput.questions.map((question) => {
         const draft = props.drafts[question.id];
+        const selectedOptionLabels = draft?.selectedOptionLabels ?? [];
         return (
           <View key={question.id} className="gap-2 pt-1">
             <Text className="font-t3-bold text-xs uppercase tracking-[1px] text-neutral-500 dark:text-neutral-500">
@@ -42,10 +43,16 @@ export function PendingUserInputCard(props: PendingUserInputCardProps) {
             <Text className="font-sans text-base leading-snug text-neutral-950 dark:text-neutral-50">
               {question.question}
             </Text>
+            {question.multiSelect ? (
+              <Text className="font-sans text-sm text-neutral-500 dark:text-neutral-400">
+                Select one or more options, then submit.
+              </Text>
+            ) : null}
             <View className="flex-row flex-wrap gap-2.5">
               {question.options.map((option) => {
                 const selected =
-                  draft?.selectedOptionLabel === option.label && !draft.customAnswer?.trim().length;
+                  selectedOptionLabels.includes(option.label) &&
+                  !draft?.customAnswer?.trim().length;
                 return (
                   <Pressable
                     key={option.label}
@@ -62,6 +69,8 @@ export function PendingUserInputCard(props: PendingUserInputCardProps) {
                         option.label,
                       )
                     }
+                    accessibilityRole={question.multiSelect ? "checkbox" : "radio"}
+                    accessibilityState={{ checked: selected }}
                   >
                     <Text
                       className={cn(

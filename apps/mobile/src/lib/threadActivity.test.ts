@@ -9,14 +9,103 @@ import {
   TurnId,
   type OrchestrationThread,
   type OrchestrationThreadActivity,
+  type UserInputQuestion,
 } from "@t3tools/contracts";
 
 import {
+  buildPendingUserInputAnswers,
   buildThreadFeed,
   deriveThreadFeedPresentation,
+  resolvePendingUserInputAnswer,
+  setPendingUserInputCustomAnswer,
+  togglePendingUserInputOptionSelection,
   type ThreadFeedActivity,
   type ThreadFeedEntry,
 } from "./threadActivity";
+
+const multiSelectQuestion: UserInputQuestion = {
+  id: "services",
+  header: "Services",
+  question: "Which services should be enabled?",
+  options: [
+    { label: "API", description: "Enable the API" },
+    { label: "Worker", description: "Enable the worker" },
+    { label: "Web", description: "Enable the web app" },
+  ],
+  multiSelect: true,
+};
+
+const singleSelectQuestion: UserInputQuestion = {
+  id: "region",
+  header: "Region",
+  question: "Which region?",
+  options: [
+    { label: "EU", description: "Europe" },
+    { label: "US", description: "United States" },
+  ],
+  multiSelect: false,
+};
+
+describe("pending user input answers", () => {
+  it("toggles multiple selections without replacing earlier choices", () => {
+    const apiSelected = togglePendingUserInputOptionSelection(
+      multiSelectQuestion,
+      undefined,
+      "API",
+    );
+    const workerSelected = togglePendingUserInputOptionSelection(
+      multiSelectQuestion,
+      apiSelected,
+      "Worker",
+    );
+
+    expect(workerSelected.selectedOptionLabels).toEqual(["API", "Worker"]);
+    expect(resolvePendingUserInputAnswer(multiSelectQuestion, workerSelected)).toEqual([
+      "API",
+      "Worker",
+    ]);
+  });
+
+  it("deselects one option while preserving the remaining selection", () => {
+    const draft = { selectedOptionLabels: ["API", "Worker"] };
+    expect(togglePendingUserInputOptionSelection(multiSelectQuestion, draft, "API")).toEqual({
+      customAnswer: "",
+      selectedOptionLabels: ["Worker"],
+    });
+  });
+
+  it("keeps single-select replacement behavior", () => {
+    const first = togglePendingUserInputOptionSelection(singleSelectQuestion, undefined, "EU");
+    const second = togglePendingUserInputOptionSelection(singleSelectQuestion, first, "US");
+    expect(second.selectedOptionLabels).toEqual(["US"]);
+    expect(resolvePendingUserInputAnswer(singleSelectQuestion, second)).toBe("US");
+  });
+
+  it("serializes multi-select arrays only after every question is answered", () => {
+    const partial = {
+      services: { selectedOptionLabels: ["API", "Worker"] },
+    };
+    expect(buildPendingUserInputAnswers([multiSelectQuestion, singleSelectQuestion], partial)).toBe(
+      null,
+    );
+
+    expect(
+      buildPendingUserInputAnswers([multiSelectQuestion, singleSelectQuestion], {
+        ...partial,
+        region: { selectedOptionLabels: ["EU"] },
+      }),
+    ).toEqual({ services: ["API", "Worker"], region: "EU" });
+  });
+
+  it("lets a custom answer override selections and requires a new choice when cleared", () => {
+    const selected = { selectedOptionLabels: ["API", "Worker"] };
+    const custom = setPendingUserInputCustomAnswer(selected, "Use the default stack");
+    expect(resolvePendingUserInputAnswer(multiSelectQuestion, custom)).toBe(
+      "Use the default stack",
+    );
+    expect(setPendingUserInputCustomAnswer(custom, "")).toEqual({ customAnswer: "" });
+  });
+});
 
 function makeActivity(
   input: Partial<OrchestrationThreadActivity> &
