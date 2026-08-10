@@ -53,6 +53,7 @@ import {
   useActiveBrowserRecordingTabIds,
 } from "~/browser/browserRecording";
 import { stackedThreadToast, toastManager } from "~/components/ui/toast";
+import { writeTextToClipboard } from "~/hooks/useCopyToClipboard";
 
 interface Props {
   threadRef: ScopedThreadRef;
@@ -278,20 +279,10 @@ export function PreviewView({
             let toastId: ReturnType<typeof toastManager.add>;
 
             const copyPath = () => {
-              if (!navigator.clipboard?.writeText) {
-                toastManager.update(
-                  toastId,
-                  stackedThreadToast({
-                    type: "error",
-                    title: "Unable to copy recording path",
-                    description: "Clipboard API unavailable.",
-                    actionProps: revealAction,
-                  }),
-                );
-                return;
-              }
-
-              void navigator.clipboard.writeText(artifact.path).then(
+              void writeTextToClipboard(artifact.path, "recording path", {
+                announceSuccess: false,
+                announceFailure: false,
+              }).then(
                 () => {
                   pathCopied = true;
                   updateRecordingToast();
@@ -419,16 +410,10 @@ export function PreviewView({
           };
 
           const copyPath = () => {
-            if (!navigator.clipboard?.writeText) {
-              updateScreenshotToast(
-                "error",
-                "Unable to copy screenshot path",
-                "Clipboard API unavailable.",
-              );
-              return;
-            }
-
-            void navigator.clipboard.writeText(artifact.path).then(
+            void writeTextToClipboard(artifact.path, "screenshot path", {
+              announceSuccess: false,
+              announceFailure: false,
+            }).then(
               () => {
                 pathCopied = true;
                 updateScreenshotToast();
