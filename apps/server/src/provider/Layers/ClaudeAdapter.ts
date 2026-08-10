@@ -62,6 +62,7 @@ import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Fiber from "effect/Fiber";
 import * as Path from "effect/Path";
+import * as Predicate from "effect/Predicate";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
@@ -158,6 +159,24 @@ interface PendingApproval {
 interface PendingUserInput {
   readonly questions: ReadonlyArray<UserInputQuestion>;
   readonly answers: Deferred.Deferred<ProviderUserInputAnswers>;
+}
+
+export function toClaudeSdkUserInputAnswers(
+  questions: ReadonlyArray<UserInputQuestion>,
+  answers: ProviderUserInputAnswers,
+): Record<string, string> {
+  const sdkAnswers: Record<string, string> = {};
+  for (const question of questions) {
+    const answer = answers[question.id];
+    if (Predicate.isString(answer)) {
+      sdkAnswers[question.id] = answer;
+      continue;
+    }
+    if (Array.isArray(answer)) {
+      sdkAnswers[question.id] = answer.filter(Predicate.isString).join(", ");
+    }
+  }
+  return sdkAnswers;
 }
 
 interface ToolInFlight {
@@ -3282,6 +3301,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
 
         // Block until the user provides answers.
         const answers = yield* Deferred.await(answersDeferred);
+        const sdkAnswers = toClaudeSdkUserInputAnswers(pendingInput.questions, answers);
         pendingUserInputs.delete(requestId);
 
         // Emit user-input.resolved so the UI knows the interaction completed.
@@ -3322,7 +3342,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
           behavior: "allow",
           updatedInput: {
             questions: toolInput.questions,
-            answers,
+            answers: sdkAnswers,
           },
         } satisfies PermissionResult;
       });

@@ -16,8 +16,8 @@ import {
   derivePendingUserInputs,
   setPendingUserInputCustomAnswer,
   sortThreadActivities,
-  togglePendingUserInputOptionSelection,
   type PendingUserInputDraftAnswer,
+  updatePendingUserInputDraftOption,
 } from "../lib/threadActivity";
 import { appAtomRegistry } from "./atom-registry";
 import { useSelectedThreadDetail } from "./use-thread-detail";
@@ -36,14 +36,7 @@ function setUserInputDraftOption(
   const current = appAtomRegistry.get(userInputDraftsByRequestKeyAtom);
   appAtomRegistry.set(userInputDraftsByRequestKeyAtom, {
     ...current,
-    [requestKey]: {
-      ...current[requestKey],
-      [question.id]: togglePendingUserInputOptionSelection(
-        question,
-        current[requestKey]?.[question.id],
-        label,
-      ),
-    },
+    [requestKey]: updatePendingUserInputDraftOption(current[requestKey] ?? {}, question, label),
   });
 }
 

@@ -19,6 +19,7 @@ import {
   resolvePendingUserInputAnswer,
   setPendingUserInputCustomAnswer,
   togglePendingUserInputOptionSelection,
+  updatePendingUserInputDraftOption,
   type ThreadFeedActivity,
   type ThreadFeedEntry,
 } from "./threadActivity";
@@ -95,6 +96,23 @@ describe("pending user input answers", () => {
         region: { selectedOptionLabels: ["EU"] },
       }),
     ).toEqual({ services: ["API", "Worker"], region: "EU" });
+  });
+
+  it("keeps option presses as draft-only state until the full answer map is built", () => {
+    let drafts = updatePendingUserInputDraftOption({}, multiSelectQuestion, "API");
+    drafts = updatePendingUserInputDraftOption(drafts, multiSelectQuestion, "Worker");
+
+    expect(drafts.services?.selectedOptionLabels).toEqual(["API", "Worker"]);
+    expect(buildPendingUserInputAnswers([multiSelectQuestion, singleSelectQuestion], drafts)).toBe(
+      null,
+    );
+
+    drafts = updatePendingUserInputDraftOption(drafts, multiSelectQuestion, "API");
+    drafts = updatePendingUserInputDraftOption(drafts, singleSelectQuestion, "EU");
+
+    expect(
+      buildPendingUserInputAnswers([multiSelectQuestion, singleSelectQuestion], drafts),
+    ).toEqual({ services: ["Worker"], region: "EU" });
   });
 
   it("lets a custom answer override selections and requires a new choice when cleared", () => {

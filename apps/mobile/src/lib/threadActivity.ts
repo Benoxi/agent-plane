@@ -1387,6 +1387,21 @@ export function togglePendingUserInputOptionSelection(
   };
 }
 
+export function updatePendingUserInputDraftOption(
+  draftAnswers: Record<string, PendingUserInputDraftAnswer>,
+  question: UserInputQuestion,
+  optionLabel: string,
+): Record<string, PendingUserInputDraftAnswer> {
+  return {
+    ...draftAnswers,
+    [question.id]: togglePendingUserInputOptionSelection(
+      question,
+      draftAnswers[question.id],
+      optionLabel,
+    ),
+  };
+}
+
 export function buildPendingUserInputAnswers(
   questions: ReadonlyArray<UserInputQuestion>,
   draftAnswers: Record<string, PendingUserInputDraftAnswer>,

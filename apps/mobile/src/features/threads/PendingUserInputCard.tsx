@@ -24,6 +24,9 @@ export interface PendingUserInputCardProps {
 }
 
 export function PendingUserInputCard(props: PendingUserInputCardProps) {
+  const submitDisabled =
+    props.answers === null || props.respondingUserInputId === props.pendingUserInput.requestId;
+  const submitBusy = props.respondingUserInputId === props.pendingUserInput.requestId;
   return (
     <View className="gap-2.5 rounded-[20px] border border-neutral-200 bg-neutral-100/80 p-4 dark:border-white/6 dark:bg-neutral-900/80">
       <Text className="font-t3-bold text-2xs uppercase tracking-[1.1px] text-sky-700 dark:text-sky-300">
@@ -71,6 +74,7 @@ export function PendingUserInputCard(props: PendingUserInputCardProps) {
                     }
                     accessibilityRole={question.multiSelect ? "checkbox" : "radio"}
                     accessibilityState={{ checked: selected }}
+                    accessibilityHint={option.description}
                   >
                     <Text
                       className={cn(
@@ -92,6 +96,8 @@ export function PendingUserInputCard(props: PendingUserInputCardProps) {
                 props.onChangeCustomAnswer(props.pendingUserInput.requestId, question.id, value)
               }
               placeholder="Or type a custom answer"
+              accessibilityLabel={`Custom answer for ${question.header}`}
+              accessibilityHint={question.question}
               className="min-h-[54px] rounded-2xl border border-neutral-200 bg-white px-3.5 py-3 font-sans text-base text-neutral-950 dark:border-white/8 dark:bg-neutral-950/70 dark:text-neutral-50"
             />
           </View>
@@ -102,10 +108,11 @@ export function PendingUserInputCard(props: PendingUserInputCardProps) {
           "items-center justify-center rounded-2xl px-4 py-3.5",
           props.answers ? "bg-blue-500" : "bg-neutral-200 dark:bg-neutral-700/60",
         )}
-        disabled={
-          props.answers === null || props.respondingUserInputId === props.pendingUserInput.requestId
-        }
+        disabled={submitDisabled}
         onPress={() => void props.onSubmit()}
+        accessibilityRole="button"
+        accessibilityLabel="Submit answers"
+        accessibilityState={{ busy: submitBusy, disabled: submitDisabled }}
       >
         <Text className="font-t3-extrabold text-sm text-white">Submit answers</Text>
       </Pressable>
