@@ -236,6 +236,7 @@ import {
   shouldCancelTimelineLiveFollow,
   shouldKeepTimelineJumpPending,
   shouldPositionTimelineAnchor,
+  TimelineJumpController,
 } from "./chat/MessagesTimeline.logic";
 import { ChatHeader } from "./chat/ChatHeader";
 import { PanelLayoutControls, RightPanelMaximizeControl } from "./chat/PanelLayoutControls";
@@ -3541,6 +3542,9 @@ function ChatViewContent(props: ChatViewProps) {
   const anchorUserScrollGenerationRef = useRef(0);
   const liveFollowUserScrollGenerationRef = useRef<number | null>(null);
   const pendingJumpToLatestRef = useRef(false);
+  const timelineJumpControllerRef = useRef(new TimelineJumpController());
+  const activeTimelineThreadKeyRef = useRef(activeThreadKey);
+  activeTimelineThreadKeyRef.current = activeThreadKey;
   const pendingAnchorScrollRestoreRef = useRef<{
     readonly messageId: MessageId;
     readonly offset: number;
@@ -3550,6 +3554,7 @@ function ChatViewContent(props: ChatViewProps) {
   const manualNavigationCheckFrameRef = useRef<number | null>(null);
   const cancelTimelineLiveFollowForUserNavigation = useCallback(() => {
     anchorUserScrollGenerationRef.current += 1;
+    timelineJumpControllerRef.current.cancel();
     timelineScrollModeRef.current = "free-scrolling";
     liveFollowUserScrollGenerationRef.current = null;
     pendingTimelineAnchorRef.current = null;
@@ -3645,21 +3650,47 @@ function ChatViewContent(props: ChatViewProps) {
 
   // Live-follow stays active after send/thread-open until an actual list scroll
   // gesture opts out.
-  const scrollToEnd = useCallback((animated = false) => {
-    const isAtEnd = resolveTimelineIsAtEnd(legendListRef.current?.getState());
-    isAtEndRef.current = isAtEnd;
-    const shouldFollow = shouldAutoScrollTimeline(isAtEnd, true);
-    pendingJumpToLatestRef.current = shouldKeepTimelineJumpPending(isAtEnd);
-    timelineScrollModeRef.current = shouldFollow ? "following-end" : "free-scrolling";
-    liveFollowUserScrollGenerationRef.current = shouldFollow
-      ? anchorUserScrollGenerationRef.current
-      : null;
-    pendingTimelineAnchorRef.current = null;
-    activeTimelineAnchorIndexRef.current = null;
-    showScrollDebouncer.current.cancel();
-    setShowScrollToBottom(false);
-    void legendListRef.current?.scrollToEnd?.({ animated });
-  }, []);
+  const scrollToEnd = useCallback(
+    async (animated = false) => {
+      const list = legendListRef.current;
+      const isAtEnd = resolveTimelineIsAtEnd(legendListRef.current?.getState());
+      isAtEndRef.current = isAtEnd;
+      const shouldFollow = shouldAutoScrollTimeline(isAtEnd, true);
+      pendingJumpToLatestRef.current = shouldKeepTimelineJumpPending(isAtEnd);
+      timelineScrollModeRef.current = shouldFollow ? "following-end" : "free-scrolling";
+      liveFollowUserScrollGenerationRef.current = shouldFollow
+        ? anchorUserScrollGenerationRef.current
+        : null;
+      pendingTimelineAnchorRef.current = null;
+      activeTimelineAnchorIndexRef.current = null;
+      showScrollDebouncer.current.cancel();
+      setShowScrollToBottom(false);
+      if (!list) {
+        pendingJumpToLatestRef.current = false;
+        setShowScrollToBottom(true);
+        return;
+      }
+
+      const token = timelineJumpControllerRef.current.begin({
+        threadKey: activeThreadKey,
+        userScrollGeneration: anchorUserScrollGenerationRef.current,
+      });
+      const result = await timelineJumpControllerRef.current.awaitCompletion({
+        token,
+        completion: Promise.resolve().then(() => list.scrollToEnd({ animated })),
+        getContext: () => ({
+          threadKey: activeTimelineThreadKeyRef.current,
+          userScrollGeneration: anchorUserScrollGenerationRef.current,
+        }),
+        getIsAtEnd: () => resolveTimelineIsAtEnd(legendListRef.current?.getState()),
+      });
+      if (result === "restore") {
+        pendingJumpToLatestRef.current = false;
+        setShowScrollToBottom(true);
+      }
+    },
+    [activeThreadKey],
+  );
   const prepareTimelineForOutgoingMessage = useCallback(
     (threadKey: string, messageId: MessageId) => {
       const shouldFollow = shouldAutoScrollTimeline(
@@ -3866,6 +3897,7 @@ function ChatViewContent(props: ChatViewProps) {
     }
     if (isAtEnd) {
       pendingJumpToLatestRef.current = false;
+      timelineJumpControllerRef.current.cancel();
     }
     if (isAtEndRef.current === isAtEnd) return;
     isAtEndRef.current = isAtEnd;
@@ -3970,6 +4002,7 @@ function ChatViewContent(props: ChatViewProps) {
     isAtEndRef.current = undefined;
     timelineScrollModeRef.current = "free-scrolling";
     liveFollowUserScrollGenerationRef.current = null;
+    timelineJumpControllerRef.current.cancel();
     pendingJumpToLatestRef.current = false;
     pendingTimelineAnchorRef.current = null;
     positionedTimelineAnchorRef.current = null;
@@ -6122,7 +6155,7 @@ function ChatViewContent(props: ChatViewProps) {
                     type="button"
                     aria-label="Jump to latest"
                     title="Jump to latest"
-                    onClick={() => scrollToEnd(true)}
+                    onClick={() => void scrollToEnd(true)}
                     className="chat-composer-glass pointer-events-auto flex items-center gap-1.5 rounded-full border border-border/60 px-3 py-1 text-muted-foreground text-xs shadow-sm transition-colors hover:border-border hover:text-foreground hover:cursor-pointer"
                   >
                     <ChevronDownIcon className="size-3.5" />

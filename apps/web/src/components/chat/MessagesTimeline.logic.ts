@@ -16,6 +16,7 @@ export const TIMELINE_MINIMAP_MAX_HEIGHT_CSS = "calc(100vh - 18rem)";
 export const TIMELINE_CONTENT_MAX_WIDTH = 768;
 export const TIMELINE_MINIMAP_PERSISTENT_GUTTER = 48;
 export const TIMELINE_EXACT_END_THRESHOLD = 0;
+export const TIMELINE_JUMP_TIMEOUT_MS = 1_500;
 
 export type TimelineAutoScrollMode = "strict" | "disabled";
 
@@ -67,6 +68,66 @@ export function shouldPositionTimelineAnchor(
 
 export function shouldKeepTimelineJumpPending(isAtEnd: boolean | undefined): boolean {
   return isAtEnd !== true;
+}
+
+export interface TimelineJumpContext {
+  readonly threadKey: string | null;
+  readonly userScrollGeneration: number;
+}
+
+export type TimelineJumpResult = "confirmed" | "restore" | "stale";
+
+interface TimelineJumpToken extends TimelineJumpContext {
+  readonly operationId: number;
+}
+
+export class TimelineJumpController {
+  #nextOperationId = 1;
+  #activeToken: TimelineJumpToken | null = null;
+
+  begin(context: TimelineJumpContext): TimelineJumpToken {
+    const token = { ...context, operationId: this.#nextOperationId++ };
+    this.#activeToken = token;
+    return token;
+  }
+
+  cancel(): void {
+    this.#activeToken = null;
+  }
+
+  async awaitCompletion(input: {
+    readonly token: TimelineJumpToken;
+    readonly completion: Promise<unknown>;
+    readonly getContext: () => TimelineJumpContext;
+    readonly getIsAtEnd: () => boolean | undefined;
+    readonly timeoutMs?: number;
+  }): Promise<TimelineJumpResult> {
+    let timeoutId: ReturnType<typeof setTimeout> | null = null;
+    try {
+      await Promise.race([
+        input.completion.catch(() => undefined),
+        new Promise<void>((resolve) => {
+          timeoutId = setTimeout(resolve, input.timeoutMs ?? TIMELINE_JUMP_TIMEOUT_MS);
+        }),
+      ]);
+    } finally {
+      if (timeoutId !== null) {
+        clearTimeout(timeoutId);
+      }
+    }
+
+    const context = input.getContext();
+    if (
+      this.#activeToken !== input.token ||
+      context.threadKey !== input.token.threadKey ||
+      context.userScrollGeneration !== input.token.userScrollGeneration
+    ) {
+      return "stale";
+    }
+
+    this.#activeToken = null;
+    return input.getIsAtEnd() === true ? "confirmed" : "restore";
+  }
 }
 
 export function isTimelineLiveFollowActive(

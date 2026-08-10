@@ -1,11 +1,68 @@
-import { describe, expect, it } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
 import {
   computeStableMessagesTimelineRows,
   computeMessageDurationStart,
   deriveMessagesTimelineRows,
   normalizeCompactToolLabel,
   resolveAssistantMessageCopyState,
+  TimelineJumpController,
 } from "./MessagesTimeline.logic";
+
+describe("TimelineJumpController", () => {
+  it("restores a failed jump without allowing stale completion after navigation", async () => {
+    let completeScroll!: () => void;
+    const deferredScroll = new Promise<void>((resolve) => {
+      completeScroll = resolve;
+    });
+    const controller = new TimelineJumpController();
+    let context = { threadKey: "thread-1", userScrollGeneration: 0 };
+    const firstToken = controller.begin(context);
+    const firstResult = controller.awaitCompletion({
+      token: firstToken,
+      completion: deferredScroll,
+      getContext: () => context,
+      getIsAtEnd: () => false,
+      timeoutMs: 10_000,
+    });
+
+    context = { ...context, userScrollGeneration: 1 };
+    controller.cancel();
+    completeScroll();
+    await expect(firstResult).resolves.toBe("stale");
+
+    const switchedThreadToken = controller.begin(context);
+    const switchedThreadResult = controller.awaitCompletion({
+      token: switchedThreadToken,
+      completion: Promise.resolve(),
+      getContext: () => ({ ...context, threadKey: "thread-2" }),
+      getIsAtEnd: () => false,
+    });
+    await expect(switchedThreadResult).resolves.toBe("stale");
+
+    const secondToken = controller.begin(context);
+    await expect(
+      controller.awaitCompletion({
+        token: secondToken,
+        completion: Promise.reject(new Error("scroll failed")),
+        getContext: () => context,
+        getIsAtEnd: () => false,
+      }),
+    ).resolves.toBe("restore");
+
+    vi.useFakeTimers();
+    const thirdToken = controller.begin(context);
+    const timedOut = controller.awaitCompletion({
+      token: thirdToken,
+      completion: new Promise(() => undefined),
+      getContext: () => context,
+      getIsAtEnd: () => false,
+      timeoutMs: 25,
+    });
+    await vi.advanceTimersByTimeAsync(25);
+    await expect(timedOut).resolves.toBe("restore");
+    vi.useRealTimers();
+  });
+});
 
 describe("computeMessageDurationStart", () => {
   it("returns message createdAt when there is no preceding user message", () => {
