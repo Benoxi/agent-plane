@@ -29,7 +29,7 @@ export function formatMobileConversationForClipboard(input: {
     if (entry.type === "activity-group") {
       for (const activity of entry.activities) {
         if (!activity.toolLike) continue;
-        const formatted = section("Tool output", activity.copyText);
+        const formatted = section("Tool output", activity.getCopyText());
         if (formatted) sections.push(formatted);
       }
     }
