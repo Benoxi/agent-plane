@@ -582,3 +582,9 @@ export function isComposerPayloadSnapshotCurrent(input: {
     );
   });
 }
+
+export function cancelComposerVoiceDictation(
+  composer: { cancelVoiceDictation: () => void } | null,
+): void {
+  composer?.cancelVoiceDictation();
+}

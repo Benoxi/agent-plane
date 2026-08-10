@@ -268,6 +268,7 @@ import {
   buildLocalDraftThread,
   buildLoadingThreadFromShell,
   buildThreadTurnInterruptInput,
+  cancelComposerVoiceDictation,
   collectUserMessageBlobPreviewUrls,
   createLocalDispatchSnapshot,
   deriveComposerSendState,
@@ -4718,6 +4719,10 @@ function ChatViewContent(props: ChatViewProps) {
     ],
   );
 
+  const cancelActiveComposerVoiceDictation = useCallback(() => {
+    cancelComposerVoiceDictation(composerRef.current);
+  }, [composerRef]);
+
   const onSend = async (
     e?: { preventDefault: () => void },
     directAnnotation?: {
@@ -4725,6 +4730,9 @@ function ChatViewContent(props: ChatViewProps) {
       image: ComposerImageAttachment | null;
     },
   ) => {
+    // This is the parent-level boundary for every send, including preview
+    // annotation sends that bypass ChatComposer's local submit handler.
+    cancelActiveComposerVoiceDictation();
     e?.preventDefault();
     const notifyDirectAnnotationAttached = () => {
       if (!directAnnotation) return;
@@ -5152,6 +5160,7 @@ function ChatViewContent(props: ChatViewProps) {
 
   const onScheduleMessage = useCallback(
     async (delaySeconds: number) => {
+      cancelActiveComposerVoiceDictation();
       if (!activeThread || !isServerThread) {
         return;
       }
@@ -5360,6 +5369,7 @@ function ChatViewContent(props: ChatViewProps) {
     },
     [
       activeThread,
+      cancelActiveComposerVoiceDictation,
       clearComposerDraftContent,
       composerDraftTarget,
       composerRef,

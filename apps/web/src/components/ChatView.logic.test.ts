@@ -6,7 +6,7 @@ import {
   ThreadId,
   TurnId,
 } from "@t3tools/contracts";
-import { describe, expect, it } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
 
 import type { Thread, ThreadShell } from "../types";
 import {
@@ -16,6 +16,7 @@ import {
   buildExpiredTerminalContextToastCopy,
   buildLoadingThreadFromShell,
   buildThreadTurnInterruptInput,
+  cancelComposerVoiceDictation,
   createLocalDispatchSnapshot,
   deriveComposerSendState,
   dismissBranchMismatchForSession,
@@ -31,6 +32,17 @@ import {
   shouldShowBranchMismatchBanner,
   shouldWriteThreadErrorToCurrentServerThread,
 } from "./ChatView.logic";
+
+describe("cancelComposerVoiceDictation", () => {
+  it("uses the imperative composer boundary for parent-driven draft advances", () => {
+    const cancelVoiceDictation = vi.fn();
+
+    cancelComposerVoiceDictation({ cancelVoiceDictation });
+    cancelComposerVoiceDictation(null);
+
+    expect(cancelVoiceDictation).toHaveBeenCalledOnce();
+  });
+});
 
 const environmentId = EnvironmentId.make("environment-local");
 const projectId = ProjectId.make("project-1");

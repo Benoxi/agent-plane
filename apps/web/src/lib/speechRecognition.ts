@@ -1,5 +1,12 @@
 export type ComposerSpeechRecognitionConstructor = new () => SpeechRecognition;
 
+export interface ComposerSpeechRecognition {
+  start: () => void;
+  stop: () => void;
+  abort: () => void;
+  dispose: (options?: { abort?: boolean }) => void;
+}
+
 export type SpeechRecognitionSupport =
   | { supported: true; ctor: ComposerSpeechRecognitionConstructor }
   | { supported: false; reason: "missing-api" | "insecure-context" };
@@ -131,11 +138,7 @@ export function createComposerSpeechRecognition(input: {
   onInterimText: (text: string) => void;
   onError: (message: string) => void;
   onEnd: () => void;
-}): {
-  start: () => void;
-  stop: () => void;
-  abort: () => void;
-} {
+}): ComposerSpeechRecognition {
   const support = detectSpeechRecognitionSupport();
   if (!support.supported) {
     throw new Error(
@@ -150,25 +153,45 @@ export function createComposerSpeechRecognition(input: {
   recognition.interimResults = true;
   recognition.lang = input.language || "en-US";
   const transcriptTracker = createSpeechRecognitionTranscriptTracker();
-  recognition.addEventListener("result", (event) => {
+  let disposed = false;
+  const handleResult = (event: Event) => {
+    if (disposed) return;
     const speechEvent = event as SpeechRecognitionEvent;
     const text = transcriptTracker.update(speechEvent);
     if (text.finalText) {
       input.onFinalText(text.finalText);
     }
+    if (disposed) return;
     input.onInterimText(text.interimText);
-  });
-  recognition.addEventListener("error", (event) => {
+  };
+  const handleError = (event: Event) => {
+    if (disposed) return;
     const speechEvent = event as SpeechRecognitionErrorEvent;
     input.onError(speechRecognitionErrorMessage(speechEvent.error));
-  });
-  recognition.addEventListener("end", () => {
+  };
+  const handleEnd = () => {
+    if (disposed) return;
     input.onEnd();
-  });
+  };
+  recognition.addEventListener("result", handleResult);
+  recognition.addEventListener("error", handleError);
+  recognition.addEventListener("end", handleEnd);
+
+  const dispose = (options?: { abort?: boolean }) => {
+    if (disposed) return;
+    disposed = true;
+    recognition.removeEventListener("result", handleResult);
+    recognition.removeEventListener("error", handleError);
+    recognition.removeEventListener("end", handleEnd);
+    if (options?.abort !== false) {
+      recognition.abort();
+    }
+  };
 
   return {
     start: () => recognition.start(),
     stop: () => recognition.stop(),
-    abort: () => recognition.abort(),
+    abort: dispose,
+    dispose,
   };
 }
