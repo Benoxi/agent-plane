@@ -139,24 +139,31 @@ function makeThread(overrides: Partial<Thread> = {}): Thread {
 }
 
 describe("buildThreadActionItems", () => {
-  it("orders threads by most recent activity and formats timestamps from updatedAt", () => {
+  it("orders and labels threads by latest user activity instead of updatedAt", () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-03-25T12:00:00.000Z"));
 
     try {
       const items = buildThreadActionItems({
         threads: [
-          makeThread({
-            id: ThreadId.make("thread-older"),
-            title: "Older thread",
-            updatedAt: "2026-03-24T12:00:00.000Z",
-          }),
-          makeThread({
-            id: ThreadId.make("thread-newer"),
-            title: "Newer thread",
-            createdAt: "2026-03-20T00:00:00.000Z",
-            updatedAt: "2026-03-20T00:00:00.000Z",
-          }),
+          {
+            ...makeThread({
+              id: ThreadId.make("thread-older"),
+              title: "Older thread",
+              createdAt: "2026-03-10T00:00:00.000Z",
+              updatedAt: "2026-03-25T11:00:00.000Z",
+            }),
+            latestUserMessageAt: "2026-03-20T00:00:00.000Z",
+          },
+          {
+            ...makeThread({
+              id: ThreadId.make("thread-newer"),
+              title: "Newer thread",
+              createdAt: "2026-03-19T00:00:00.000Z",
+              updatedAt: "2026-03-21T00:00:00.000Z",
+            }),
+            latestUserMessageAt: "2026-03-24T12:00:00.000Z",
+          },
         ],
         projectTitleById: new Map([[PROJECT_ID, "Project"]]),
         sortOrder: "updated_at",
@@ -165,8 +172,8 @@ describe("buildThreadActionItems", () => {
       });
 
       expect(items.map((item) => item.value)).toEqual([
-        "thread:thread-older",
         "thread:thread-newer",
+        "thread:thread-older",
       ]);
       expect(items[0]?.timestamp).toBe("1d ago");
       expect(items[1]?.timestamp).toBe("5d ago");

@@ -480,16 +480,20 @@ export function firstValidTimestamp(
   return null;
 }
 
-// Keep active threads in meaningful-activity order so assistant output,
-// status changes, and title updates return a thread to the top. Status
-// (including pending approval) is still carried by each card's edge strip.
+// Keep active threads in user-activity order. Assistant output, status changes,
+// and title updates also touch updatedAt, but must not move a row while the user
+// is reading the sidebar.
 export function sortThreadsForSidebarV2<
-  T extends { readonly id: string; readonly createdAt: string; readonly updatedAt: string },
+  T extends {
+    readonly id: string;
+    readonly createdAt: string;
+    readonly latestUserMessageAt?: string | null;
+  },
 >(threads: readonly T[]): T[] {
   return [...threads].toSorted(
     (left, right) =>
-      firstValidTimestampMs(right.updatedAt, right.createdAt) -
-        firstValidTimestampMs(left.updatedAt, left.createdAt) ||
+      firstValidTimestampMs(right.latestUserMessageAt, right.createdAt) -
+        firstValidTimestampMs(left.latestUserMessageAt, left.createdAt) ||
       parseTimestampMs(right.createdAt) - parseTimestampMs(left.createdAt) ||
       left.id.localeCompare(right.id),
   );
