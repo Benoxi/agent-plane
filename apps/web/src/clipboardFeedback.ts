@@ -16,7 +16,8 @@ export class ClipboardFeedbackController {
   readonly #listeners = new Set<ClipboardFeedbackListener>();
   readonly #now: () => number;
   #nextOperationId = 1;
-  #lastAnnouncedSuccess: { target: string; at: number } | null = null;
+  #latestOperationId = 0;
+  #lastAnnouncedSuccess: { dedupeKey: string; at: number } | null = null;
 
   constructor(now: () => number = Date.now) {
     this.#now = now;
@@ -29,25 +30,33 @@ export class ClipboardFeedbackController {
 
   start(target: string): number {
     const operationId = this.#nextOperationId++;
+    this.#latestOperationId = operationId;
     this.#emit({ operationId, target, status: "pending", announce: false });
     return operationId;
   }
 
-  succeed(operationId: number, target: string, allowAnnouncement = true): void {
+  succeed(operationId: number, target: string, allowAnnouncement = true, dedupeKey = target): void {
     const now = this.#now();
-    const announce = allowAnnouncement
-      ? this.#lastAnnouncedSuccess === null ||
-        this.#lastAnnouncedSuccess.target !== target ||
-        now - this.#lastAnnouncedSuccess.at >= DUPLICATE_SUCCESS_WINDOW_MS
-      : false;
+    const announce =
+      allowAnnouncement && operationId === this.#latestOperationId
+        ? this.#lastAnnouncedSuccess === null ||
+          this.#lastAnnouncedSuccess.dedupeKey !== dedupeKey ||
+          now - this.#lastAnnouncedSuccess.at >= DUPLICATE_SUCCESS_WINDOW_MS
+        : false;
     if (announce) {
-      this.#lastAnnouncedSuccess = { target, at: now };
+      this.#lastAnnouncedSuccess = { dedupeKey, at: now };
     }
     this.#emit({ operationId, target, status: "success", announce });
   }
 
   fail(operationId: number, target: string, error: Error, allowAnnouncement = true): void {
-    this.#emit({ operationId, target, status: "failure", announce: allowAnnouncement, error });
+    this.#emit({
+      operationId,
+      target,
+      status: "failure",
+      announce: allowAnnouncement && operationId === this.#latestOperationId,
+      error,
+    });
   }
 
   #emit(event: ClipboardFeedbackEvent): void {

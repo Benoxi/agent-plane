@@ -38,6 +38,24 @@ describe("ClipboardFeedbackController", () => {
     });
   });
 
+  it("does not suppress a different clipboard operation in the same category", () => {
+    const controller = new ClipboardFeedbackController(() => 1_000);
+    const listener = vi.fn();
+    controller.subscribe(listener);
+
+    const first = controller.start("chat message");
+    controller.succeed(first, "chat message", true, "message:a");
+    const second = controller.start("chat message");
+    controller.succeed(second, "chat message", true, "message:b");
+
+    expect(listener).toHaveBeenLastCalledWith({
+      operationId: second,
+      target: "chat message",
+      status: "success",
+      announce: true,
+    });
+  });
+
   it("announces failures with a sanitized operation error", () => {
     const controller = new ClipboardFeedbackController();
     const listener = vi.fn();
@@ -53,6 +71,30 @@ describe("ClipboardFeedbackController", () => {
       status: "failure",
       announce: true,
       error,
+    });
+  });
+
+  it("does not announce stale operations that finish after a newer copy starts", () => {
+    const controller = new ClipboardFeedbackController();
+    const listener = vi.fn();
+    controller.subscribe(listener);
+
+    const first = controller.start("first");
+    const second = controller.start("second");
+    controller.succeed(first, "first");
+    controller.succeed(second, "second");
+
+    expect(listener).toHaveBeenNthCalledWith(3, {
+      operationId: first,
+      target: "first",
+      status: "success",
+      announce: false,
+    });
+    expect(listener).toHaveBeenLastCalledWith({
+      operationId: second,
+      target: "second",
+      status: "success",
+      announce: true,
     });
   });
 });

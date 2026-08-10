@@ -75,4 +75,17 @@ describe("writeTextToClipboard", () => {
     await expect(verifyClipboardWriteBestEffort("expected")).resolves.toBe("matched");
     expect(readText).toHaveBeenCalledOnce();
   });
+
+  it("treats a permitted readback mismatch as inconclusive after a successful write", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    const readText = vi.fn().mockResolvedValue("newer clipboard value");
+    vi.stubGlobal("window", {});
+    vi.stubGlobal("document", { hasFocus: () => true });
+    vi.stubGlobal("navigator", {
+      clipboard: { writeText, readText },
+      permissions: { query: vi.fn().mockResolvedValue({ state: "granted" }) },
+    });
+
+    await expect(writeTextToClipboard("copied value", "message")).resolves.toBe(true);
+  });
 });

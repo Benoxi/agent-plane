@@ -3411,7 +3411,7 @@ function ChatViewContent(props: ChatViewProps) {
     useRightPanelStore.getState().closeAllSurfaces(activeThreadRef);
   }, [activeThreadRef, cleanupRightPanelSurfaces, rightPanelState.surfaces]);
   const copyRightPanelFilePath = useCallback((relativePath: string) => {
-    void writeTextToClipboard(relativePath, "path");
+    void writeTextToClipboard(relativePath, "path").catch(() => undefined);
   }, []);
   useEffect(
     () =>

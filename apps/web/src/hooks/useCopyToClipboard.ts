@@ -28,6 +28,15 @@ export class ClipboardWriteError extends Schema.TaggedErrorClass<ClipboardWriteE
 
 export type ClipboardWriteVerification = "matched" | "mismatched" | "unavailable";
 
+function clipboardDedupeKey(target: string, value: string): string {
+  let hash = 2_166_136_261;
+  for (let index = 0; index < value.length; index += 1) {
+    hash ^= value.charCodeAt(index);
+    hash = Math.imul(hash, 16_777_619);
+  }
+  return `${target}:${value.length}:${hash >>> 0}`;
+}
+
 export async function verifyClipboardWriteBestEffort(
   expectedValue: string,
 ): Promise<ClipboardWriteVerification> {
@@ -77,11 +86,13 @@ export async function writeTextToClipboard(
 
   try {
     await navigator.clipboard.writeText(value);
-    const verification = await verifyClipboardWriteBestEffort(value);
-    if (verification === "mismatched") {
-      throw new Error("The clipboard changed before the copy could be confirmed.");
-    }
-    clipboardFeedbackController.succeed(operationId, target, announceSuccess);
+    await verifyClipboardWriteBestEffort(value);
+    clipboardFeedbackController.succeed(
+      operationId,
+      target,
+      announceSuccess,
+      clipboardDedupeKey(target, value),
+    );
     return true;
   } catch (cause) {
     const error = new ClipboardWriteError({

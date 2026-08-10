@@ -332,7 +332,10 @@ export function BranchToolbarBranchSelector({
   // Branch actions
   // ---------------------------------------------------------------------------
   const copyBranchName = useCallback((branchName: string) => {
-    void writeTextToClipboard(branchName, "branch name").then(
+    void writeTextToClipboard(branchName, "branch name", {
+      announceSuccess: false,
+      announceFailure: false,
+    }).then(
       (didCopy) => {
         if (!didCopy) return;
         toastManager.add({

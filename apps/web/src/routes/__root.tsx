@@ -103,19 +103,25 @@ function RootRouteView() {
 
   if (pathname === "/pair" || pathname === "/connect" || pathname.startsWith("/connect/")) {
     return (
-      <>
-        <DocumentTitleSync />
-        <Outlet />
-      </>
+      <ToastProvider>
+        <AnchoredToastProvider>
+          <ClipboardFeedbackCoordinator />
+          <DocumentTitleSync />
+          <Outlet />
+        </AnchoredToastProvider>
+      </ToastProvider>
     );
   }
 
   if (authGateState.status !== "authenticated" && authGateState.status !== "hosted-static") {
     return (
-      <>
-        <DocumentTitleSync />
-        <Outlet />
-      </>
+      <ToastProvider>
+        <AnchoredToastProvider>
+          <ClipboardFeedbackCoordinator />
+          <DocumentTitleSync />
+          <Outlet />
+        </AnchoredToastProvider>
+      </ToastProvider>
     );
   }
 

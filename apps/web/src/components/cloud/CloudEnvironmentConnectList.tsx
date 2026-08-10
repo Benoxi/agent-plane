@@ -121,7 +121,7 @@ export function CloudEnvironmentConnectRows({
         ? {
             secondaryActionProps: {
               children: "Copy trace ID",
-              onClick: () => void writeTextToClipboard(traceId, "trace ID"),
+              onClick: () => void writeTextToClipboard(traceId, "trace ID").catch(() => undefined),
             },
           }
         : undefined,

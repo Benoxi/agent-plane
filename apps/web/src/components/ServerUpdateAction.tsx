@@ -132,20 +132,6 @@ export function ServerUpdateAction({
   });
   const { copyToClipboard } = useCopyToClipboard<{ command: string }>({
     target: "update command",
-    onCopy: ({ command }) => {
-      toastManager.add({
-        type: "success",
-        title: "Update command copied",
-        description: `Run \`${command}\` on ${serverLabel} to update it.`,
-      });
-    },
-    onError: (error) => {
-      toastManager.add({
-        type: "error",
-        title: "Could not copy update command",
-        description: error.message,
-      });
-    },
   });
 
   const handleUpdate = async () => {
