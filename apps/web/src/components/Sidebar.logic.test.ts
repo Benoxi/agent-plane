@@ -450,6 +450,24 @@ describe("orderItemsByPreferredIds", () => {
     ]);
   });
 
+  it("keeps a captured menu order while using the latest item values", () => {
+    const ordered = orderItemsByPreferredIds({
+      items: [
+        { id: "workspace-b", label: "Renamed B" },
+        { id: "workspace-a", label: "Renamed A" },
+        { id: "workspace-c", label: "New C" },
+      ],
+      preferredIds: ["workspace-a", "workspace-b"],
+      getId: (workspace) => workspace.id,
+    });
+
+    expect(ordered).toEqual([
+      { id: "workspace-a", label: "Renamed A" },
+      { id: "workspace-b", label: "Renamed B" },
+      { id: "workspace-c", label: "New C" },
+    ]);
+  });
+
   it("honors projectOrder physical keys via getProjectOrderKey", async () => {
     // Regression guard for #1904 / the regression introduced by #2055:
     // `projectOrder` is populated with physical keys (envId + cwd-derived)
@@ -1293,18 +1311,20 @@ describe("sortProjectsForSidebar", () => {
     ]);
   });
 
-  it("falls back to project timestamps when a project has no threads", () => {
+  it("uses creation time rather than rename-sensitive updates when a project has no threads", () => {
     const sorted = sortProjectsForSidebar(
       [
         makeProject({
           id: ProjectId.make("project-1"),
           title: "Older project",
-          updatedAt: "2026-03-09T10:01:00.000Z",
+          createdAt: "2026-03-09T10:01:00.000Z",
+          updatedAt: "2026-03-09T10:20:00.000Z",
         }),
         makeProject({
           id: ProjectId.make("project-2"),
           title: "Newer project",
-          updatedAt: "2026-03-09T10:05:00.000Z",
+          createdAt: "2026-03-09T10:05:00.000Z",
+          updatedAt: "2026-03-09T10:10:00.000Z",
         }),
       ],
       [],
@@ -1317,20 +1337,16 @@ describe("sortProjectsForSidebar", () => {
     ]);
   });
 
-  it("falls back to name and id ordering when projects have no sortable timestamps", () => {
+  it("uses immutable ids rather than renamed titles to break timestamp ties", () => {
     const sorted = sortProjectsForSidebar(
       [
         makeProject({
           id: ProjectId.make("project-2"),
-          title: "Beta",
-          createdAt: "invalid-created-at" as never,
-          updatedAt: "invalid-updated-at" as never,
+          title: "Alpha after rename",
         }),
         makeProject({
           id: ProjectId.make("project-1"),
-          title: "Alpha",
-          createdAt: "invalid-created-at" as never,
-          updatedAt: "invalid-updated-at" as never,
+          title: "Zulu after rename",
         }),
       ],
       [],
@@ -1397,14 +1413,17 @@ describe("sortProjectsForSidebar", () => {
     ]);
   });
 
-  it("returns the project timestamp when no threads are present", () => {
+  it("returns the project creation timestamp when no threads are present", () => {
     const timestamp = getProjectSortTimestamp(
-      makeProject({ updatedAt: "2026-03-09T10:10:00.000Z" }),
+      makeProject({
+        createdAt: "2026-03-09T10:05:00.000Z",
+        updatedAt: "2026-03-09T10:10:00.000Z",
+      }),
       [],
       "updated_at",
     );
 
-    expect(timestamp).toBe(Date.parse("2026-03-09T10:10:00.000Z"));
+    expect(timestamp).toBe(Date.parse("2026-03-09T10:05:00.000Z"));
   });
 });
 
