@@ -25,6 +25,7 @@ import {
   ClaudeSessionImportDialog,
   type ClaudeSessionImportTarget,
 } from "./ClaudeSessionImportDialog";
+import { claudeSessionImportTargetForProject } from "./claudeSessionImportTarget";
 import { ProjectFavicon } from "./ProjectFavicon";
 import { useAtomValue } from "@effect/atom-react";
 import { autoAnimate } from "@formkit/auto-animate";
@@ -1432,13 +1433,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
   );
 
   const openClaudeImportDialog = useCallback((member: SidebarProjectGroupMember) => {
-    setClaudeImportTarget({
-      environmentId: member.environmentId,
-      projectId: member.id,
-      title: member.title,
-      workspaceRoot: member.workspaceRoot,
-      ...(member.environmentLabel ? { environmentLabel: member.environmentLabel } : {}),
-    });
+    setClaudeImportTarget(claudeSessionImportTargetForProject(member));
   }, []);
 
   const removeProject = useCallback(

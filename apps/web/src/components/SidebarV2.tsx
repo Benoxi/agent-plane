@@ -27,6 +27,7 @@ import {
   FolderPlusIcon,
   GitBranchIcon,
   EllipsisIcon,
+  ImportIcon,
   MessageSquareIcon,
   PinIcon,
   PlusIcon,
@@ -139,6 +140,11 @@ import {
   type SnoozePreset,
 } from "./Sidebar.snooze";
 import { ProjectFavicon } from "./ProjectFavicon";
+import { ClaudeSessionImportDialog } from "./ClaudeSessionImportDialog";
+import {
+  claudeSessionImportTargetForProject,
+  type ClaudeSessionImportTarget,
+} from "./claudeSessionImportTarget";
 import { ProviderInstanceIcon } from "./chat/ProviderInstanceIcon";
 import { getTriggerDisplayModelLabel } from "./chat/providerIconUtils";
 import { deriveProviderInstanceEntries, type ProviderInstanceEntry } from "../providerInstances";
@@ -1258,6 +1264,9 @@ export default function SidebarV2() {
   const [projectActionsTarget, setProjectActionsTarget] = useState<SidebarProjectSnapshot | null>(
     null,
   );
+  const [claudeImportTarget, setClaudeImportTarget] = useState<ClaudeSessionImportTarget | null>(
+    null,
+  );
   const [projectScopeMenuOpen, setProjectScopeMenuOpen] = useState(false);
   const newThreadContext = useHandleNewThread();
   const openAddProjectCommandPalette = useCallback(
@@ -1578,6 +1587,10 @@ export default function SidebarV2() {
     },
     [],
   );
+  const openClaudeImportDialog = useCallback((member: SidebarProjectGroupMember) => {
+    setProjectActionsTarget(null);
+    setClaudeImportTarget(claudeSessionImportTargetForProject(member));
+  }, []);
 
   // Settled threads stay in the live shell stream (settled ≠ archived), so
   // the partition works directly off live shells: no archived-snapshot
@@ -3258,8 +3271,17 @@ export default function SidebarV2() {
                       </Select>
                     </label>
                   </div>
-                  {projectActionsTarget.memberProjects.length > 1 ? (
-                    <div className="flex justify-end">
+                  <div className="flex flex-wrap items-center justify-end gap-2">
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      aria-label={`Import Claude thread for ${member.title}`}
+                      onClick={() => openClaudeImportDialog(member)}
+                    >
+                      <ImportIcon />
+                      Import Claude thread…
+                    </Button>
+                    {projectActionsTarget.memberProjects.length > 1 ? (
                       <Button
                         size="sm"
                         variant="ghost"
@@ -3273,8 +3295,8 @@ export default function SidebarV2() {
                         <Trash2Icon />
                         Remove project
                       </Button>
-                    </div>
-                  ) : null}
+                    ) : null}
+                  </div>
                 </section>
               ))}
             </div>
@@ -3327,6 +3349,13 @@ export default function SidebarV2() {
           </DialogFooter>
         </DialogPopup>
       </Dialog>
+      <ClaudeSessionImportDialog
+        open={claudeImportTarget !== null}
+        onOpenChange={(open) => {
+          if (!open) setClaudeImportTarget(null);
+        }}
+        target={claudeImportTarget}
+      />
       <SidebarChromeFooter />
     </>
   );

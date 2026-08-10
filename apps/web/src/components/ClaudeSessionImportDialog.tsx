@@ -8,9 +8,7 @@ import {
   DEFAULT_PROVIDER_INTERACTION_MODE,
   DEFAULT_RUNTIME_MODE,
   type ClaudeSessionId,
-  type EnvironmentId,
   type ProjectClaudeSession,
-  type ProjectId,
 } from "@t3tools/contracts";
 import { useNavigate } from "@tanstack/react-router";
 import { LoaderIcon, RefreshCwIcon } from "lucide-react";
@@ -36,14 +34,9 @@ import {
 } from "./ui/dialog";
 import { Input } from "./ui/input";
 import { stackedThreadToast, toastManager } from "./ui/toast";
+import type { ClaudeSessionImportTarget } from "./claudeSessionImportTarget";
 
-export interface ClaudeSessionImportTarget {
-  readonly environmentId: EnvironmentId;
-  readonly projectId: ProjectId;
-  readonly title: string;
-  readonly workspaceRoot: string;
-  readonly environmentLabel?: string;
-}
+export type { ClaudeSessionImportTarget } from "./claudeSessionImportTarget";
 
 interface ClaudeSessionImportDialogProps {
   readonly target: ClaudeSessionImportTarget | null;
