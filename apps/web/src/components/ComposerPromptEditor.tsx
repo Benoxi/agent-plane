@@ -225,7 +225,7 @@ function resolveSkillDescription(
   return description || null;
 }
 
-type ComposerSkillMetadata = {
+export type ComposerSkillMetadata = {
   label: string;
   description: string | null;
 };
@@ -871,6 +871,35 @@ function $setComposerEditorPrompt(
     }
     $appendTextWithLineBreaks(paragraph, segment.text);
   }
+}
+
+export function $insertFencedCodeBlockAtSelection(
+  terminalContexts: ReadonlyArray<TerminalContextDraft>,
+  skillMetadata: ReadonlyMap<string, ComposerSkillMetadata>,
+): boolean {
+  const selection = $getSelection();
+  const expandedRange = getSelectionRangeForExpandedComposerOffsets(selection);
+  const collapsedRange = getSelectionRangeForComposerOffsets(selection);
+  if (!expandedRange || !collapsedRange) {
+    return false;
+  }
+
+  const currentValue = $getRoot().getTextContent();
+  const selectionIsSafeToWrap =
+    !$selectionTouchesInlineToken(selection) &&
+    !selectionTouchesMentionBoundary(currentValue, expandedRange.start, expandedRange.end);
+  const insertionStart = selectionIsSafeToWrap
+    ? expandedRange.start
+    : expandCollapsedComposerCursor(currentValue, collapsedRange.end);
+  const insertionEnd = selectionIsSafeToWrap ? expandedRange.end : insertionStart;
+  const insertion = insertFencedCodeBlock(currentValue, insertionStart, insertionEnd);
+
+  $setComposerEditorPrompt(insertion.value, terminalContexts, skillMetadata);
+  $setSelectionRangeAtComposerOffsets(
+    collapseExpandedComposerCursor(insertion.value, insertion.selectionStart),
+    collapseExpandedComposerCursor(insertion.value, insertion.selectionEnd),
+  );
+  return true;
 }
 
 function collectTerminalContextIds(node: LexicalNode): string[] {
@@ -1704,36 +1733,10 @@ function ComposerPromptEditorInner({
 
     let inserted = false;
     editor.update(() => {
-      const selection = $getSelection();
-      const expandedRange = getSelectionRangeForExpandedComposerOffsets(selection);
-      const collapsedRange = getSelectionRangeForComposerOffsets(selection);
-      if (!expandedRange || !collapsedRange) {
-        return;
-      }
-
-      const currentValue = $getRoot().getTextContent();
-      const selectionIsSafeToWrap =
-        !$selectionTouchesInlineToken(selection) &&
-        !selectionTouchesMentionBoundary(currentValue, expandedRange.start, expandedRange.end);
-      const insertionStart = selectionIsSafeToWrap
-        ? expandedRange.start
-        : expandCollapsedComposerCursor(currentValue, collapsedRange.end);
-      const insertionEnd = selectionIsSafeToWrap ? expandedRange.end : insertionStart;
-      const insertion = insertFencedCodeBlock(currentValue, insertionStart, insertionEnd);
-
-      $setComposerEditorPrompt(
-        insertion.value,
-        terminalContextsRef.current,
-        skillMetadataRef.current,
-      );
-      $setSelectionRangeAtComposerOffsets(
-        collapseExpandedComposerCursor(insertion.value, insertion.selectionStart),
-        collapseExpandedComposerCursor(insertion.value, insertion.selectionEnd),
-      );
-      inserted = true;
+      inserted = $insertFencedCodeBlockAtSelection(terminalContexts, skillMetadataRef.current);
     });
     return inserted;
-  }, [editor]);
+  }, [editor, terminalContexts]);
 
   useImperativeHandle(
     editorRef,

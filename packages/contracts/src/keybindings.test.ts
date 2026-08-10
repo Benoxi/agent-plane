@@ -123,7 +123,7 @@ it.effect("accepts dynamic script run commands", () =>
 it.effect("accepts the fenced-code composer command", () =>
   Effect.gen(function* () {
     const parsed = yield* decode(KeybindingRule, {
-      key: "mod+alt+c",
+      key: "mod+shift+e",
       command: "composer.insertFencedCodeBlock",
     });
     assert.strictEqual(parsed.command, "composer.insertFencedCodeBlock");

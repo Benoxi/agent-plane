@@ -38,7 +38,7 @@ export const DEFAULT_KEYBINDINGS: ReadonlyArray<KeybindingRule> = [
   { key: "mod+p", command: "filePicker.toggle", when: "!terminalFocus" },
   { key: "mod+shift+f", command: "projectSearch.toggle", when: "!terminalFocus" },
   { key: "mod+s", command: "composer.stash", when: "!terminalFocus" },
-  { key: "mod+alt+c", command: "composer.insertFencedCodeBlock", when: "!terminalFocus" },
+  { key: "mod+shift+e", command: "composer.insertFencedCodeBlock", when: "!terminalFocus" },
   { key: "mod+n", command: "chat.new", when: "!terminalFocus" },
   { key: "mod+shift+o", command: "chat.new", when: "!terminalFocus" },
   { key: "mod+shift+n", command: "chat.newLocal", when: "!terminalFocus" },

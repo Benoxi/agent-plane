@@ -129,7 +129,7 @@ const DEFAULT_BINDINGS = compile([
     whenAst: whenNot(whenIdentifier("terminalFocus")),
   },
   {
-    shortcut: modShortcut("c", { altKey: true }),
+    shortcut: modShortcut("e", { shiftKey: true }),
     command: "composer.insertFencedCodeBlock",
     whenAst: whenNot(whenIdentifier("terminalFocus")),
   },
@@ -483,14 +483,14 @@ describe("model picker navigation helpers", () => {
 describe("chat/editor shortcuts", () => {
   it("matches fenced-code insertion outside terminal focus", () => {
     assert.strictEqual(
-      resolveShortcutCommand(event({ key: "c", metaKey: true, altKey: true }), DEFAULT_BINDINGS, {
+      resolveShortcutCommand(event({ key: "E", metaKey: true, shiftKey: true }), DEFAULT_BINDINGS, {
         platform: "MacIntel",
         context: { terminalFocus: false },
       }),
       "composer.insertFencedCodeBlock",
     );
     assert.notStrictEqual(
-      resolveShortcutCommand(event({ key: "c", ctrlKey: true, altKey: true }), DEFAULT_BINDINGS, {
+      resolveShortcutCommand(event({ key: "E", ctrlKey: true, shiftKey: true }), DEFAULT_BINDINGS, {
         platform: "Linux",
         context: { terminalFocus: true },
       }),
@@ -501,13 +501,13 @@ describe("chat/editor shortcuts", () => {
   it("lets a later conflicting custom shortcut shadow fenced-code insertion", () => {
     const bindings = compile([
       {
-        shortcut: modShortcut("c", { altKey: true }),
+        shortcut: modShortcut("e", { shiftKey: true }),
         command: "composer.insertFencedCodeBlock",
       },
-      { shortcut: modShortcut("c", { altKey: true }), command: "chat.new" },
+      { shortcut: modShortcut("e", { shiftKey: true }), command: "chat.new" },
     ]);
     assert.strictEqual(
-      resolveShortcutCommand(event({ key: "c", ctrlKey: true, altKey: true }), bindings, {
+      resolveShortcutCommand(event({ key: "E", ctrlKey: true, shiftKey: true }), bindings, {
         platform: "Linux",
       }),
       "chat.new",
