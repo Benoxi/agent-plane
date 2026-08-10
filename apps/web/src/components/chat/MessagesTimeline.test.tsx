@@ -298,13 +298,13 @@ describe("MessagesTimeline", () => {
     expect(markup).toContain("1 changed file");
   });
 
-  it("uses LegendList isNearEnd when deciding whether the live edge is visible", async () => {
+  it("uses only the exact LegendList end state for live-follow", async () => {
     const {
       resolveTimelineIsAtEnd,
-      isTimelineLiveFollowActive,
-      keyboardEventMayNavigateTimelineAwayFromEnd,
       shouldCancelTimelineLiveFollow,
-      TIMELINE_NEAR_END_THRESHOLD,
+      shouldKeepTimelineJumpPending,
+      shouldPositionTimelineAnchor,
+      TIMELINE_EXACT_END_THRESHOLD,
       resolveTimelineMinimapHasPersistentGutter,
       resolveTimelineMinimapHeightStyle,
       resolveTimelineMinimapHitStripWidth,
@@ -313,26 +313,32 @@ describe("MessagesTimeline", () => {
       resolveTimelineMinimapTopPercent,
     } = await import("./MessagesTimeline.logic");
 
-    expect(resolveTimelineIsAtEnd({ isNearEnd: true, isAtEnd: false })).toBe(true);
-    expect(resolveTimelineIsAtEnd({ isNearEnd: false, isAtEnd: true })).toBe(false);
-    expect(resolveTimelineIsAtEnd({ isAtEnd: true })).toBe(true);
+    expect(
+      resolveTimelineIsAtEnd({
+        isNearEnd: true,
+        isAtEnd: true,
+        isWithinMaintainScrollAtEndThreshold: false,
+      }),
+    ).toBe(false);
+    expect(
+      resolveTimelineIsAtEnd({
+        isNearEnd: false,
+        isAtEnd: false,
+        isWithinMaintainScrollAtEndThreshold: true,
+      }),
+    ).toBe(true);
+    expect(resolveTimelineIsAtEnd({ isAtEnd: true })).toBeUndefined();
     expect(resolveTimelineIsAtEnd(undefined)).toBeUndefined();
-    expect(TIMELINE_NEAR_END_THRESHOLD).toBe(0.1);
+    expect(TIMELINE_EXACT_END_THRESHOLD).toBe(0);
     expect(shouldCancelTimelineLiveFollow(true)).toBe(false);
     expect(shouldCancelTimelineLiveFollow(false)).toBe(true);
-    expect(shouldCancelTimelineLiveFollow(undefined)).toBe(false);
-    expect(keyboardEventMayNavigateTimelineAwayFromEnd({ key: "PageUp", shiftKey: false })).toBe(
-      true,
-    );
-    expect(keyboardEventMayNavigateTimelineAwayFromEnd({ key: " ", shiftKey: true })).toBe(true);
-    expect(keyboardEventMayNavigateTimelineAwayFromEnd({ key: "PageDown", shiftKey: false })).toBe(
-      false,
-    );
-
-    for (const update of ["streamed message", "tool output", "pending question"] as const) {
-      expect(isTimelineLiveFollowActive(null, 1), update).toBe(false);
-      expect(isTimelineLiveFollowActive(1, 1), update).toBe(true);
-    }
+    expect(shouldCancelTimelineLiveFollow(undefined)).toBe(true);
+    expect(shouldPositionTimelineAnchor("message-1", "message-1", true, true)).toBe(true);
+    expect(shouldPositionTimelineAnchor(null, "message-1", true, true)).toBe(false);
+    expect(shouldPositionTimelineAnchor("message-1", "message-1", true, false)).toBe(false);
+    expect(shouldKeepTimelineJumpPending(undefined)).toBe(true);
+    expect(shouldKeepTimelineJumpPending(false)).toBe(true);
+    expect(shouldKeepTimelineJumpPending(true)).toBe(false);
 
     expect(resolveTimelineMinimapHeightStyle(5)).toBe("min(32px, calc(100vh - 18rem))");
     expect(resolveTimelineMinimapTopPercent(2, 5)).toBe(50);
@@ -377,6 +383,60 @@ describe("MessagesTimeline", () => {
     expect(resolveTimelineMinimapInteractiveWidth(0, true)).toBe("22rem");
     expect(resolveTimelineMinimapInteractiveWidth(14, true)).toBe("22rem");
     expect(resolveTimelineMinimapInteractiveWidth(40, true)).toBe("22rem");
+  });
+
+  it("keeps streamed and dynamic updates from re-enabling cancelled live-follow", async () => {
+    const {
+      isTimelineLiveFollowActive,
+      keyboardEventMayNavigateTimelineAwayFromEnd,
+      shouldAutoScrollTimeline,
+    } = await import("./MessagesTimeline.logic");
+
+    expect(keyboardEventMayNavigateTimelineAwayFromEnd({ key: "PageUp", shiftKey: false })).toBe(
+      true,
+    );
+    expect(keyboardEventMayNavigateTimelineAwayFromEnd({ key: " ", shiftKey: true })).toBe(true);
+    expect(keyboardEventMayNavigateTimelineAwayFromEnd({ key: "PageDown", shiftKey: false })).toBe(
+      false,
+    );
+
+    for (const update of [
+      "streamed message",
+      "tool output",
+      "status change",
+      "item height change",
+    ] as const) {
+      const liveFollowActive = isTimelineLiveFollowActive(null, 1);
+      expect(liveFollowActive, update).toBe(false);
+      expect(shouldAutoScrollTimeline(true, liveFollowActive), update).toBe(false);
+    }
+  });
+
+  it("supports disabling automatic scrolling as the safe fallback", async () => {
+    const {
+      isTimelineAutoScrollEnabled,
+      shouldAutoScrollTimeline,
+      shouldCancelTimelineLiveFollow,
+      shouldPositionTimelineAnchor,
+    } = await import("./MessagesTimeline.logic");
+
+    expect(isTimelineAutoScrollEnabled("strict")).toBe(true);
+    expect(isTimelineAutoScrollEnabled("disabled")).toBe(false);
+    expect(shouldAutoScrollTimeline(true, true, "disabled")).toBe(false);
+    expect(shouldCancelTimelineLiveFollow(true, "disabled")).toBe(true);
+    expect(shouldPositionTimelineAnchor("message-1", "message-1", true, true, "disabled")).toBe(
+      false,
+    );
+  });
+
+  it("does not activate a jump follow-lock until exact-bottom confirmation", async () => {
+    const { shouldAutoScrollTimeline } = await import("./MessagesTimeline.logic");
+
+    const beforeAnimatedJumpCompletes = shouldAutoScrollTimeline(false, true);
+    const afterExactBottomConfirmation = shouldAutoScrollTimeline(true, true);
+
+    expect(beforeAnimatedJumpCompletes).toBe(false);
+    expect(afterExactBottomConfirmation).toBe(true);
   });
 
   it("anchors a sent attachment message using its measured height", () => {
@@ -436,15 +496,25 @@ describe("MessagesTimeline", () => {
     );
 
     expect(markup).toContain("Show full message");
+    expect(markup).toContain('data-user-message-collapsed="true"');
+    expect(markup).toContain('data-user-message-fade="true"');
+    expect(markup).toContain('data-user-message-footer="true"');
+  });
+
+  it("maintains the end across data, item-height, and layout changes only at threshold zero", () => {
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[buildUserTimelineEntry("Streaming response")]}
+      />,
+    );
+
     expect(markup).toContain('data-maintain-scroll-at-end="enabled"');
     expect(markup).toContain('data-maintain-scroll-at-end-animated="false"');
     expect(markup).toContain('data-maintain-scroll-at-end-data-change="true"');
     expect(markup).toContain('data-maintain-scroll-at-end-item-layout="true"');
     expect(markup).toContain('data-maintain-scroll-at-end-layout="true"');
-    expect(markup).toContain('data-maintain-scroll-at-end-threshold="0.1"');
-    expect(markup).toContain('data-user-message-collapsed="true"');
-    expect(markup).toContain('data-user-message-fade="true"');
-    expect(markup).toContain('data-user-message-footer="true"');
+    expect(markup).toContain('data-maintain-scroll-at-end-threshold="0"');
   });
 
   it("does not render collapse controls for short user messages", () => {

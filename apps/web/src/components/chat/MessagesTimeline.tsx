@@ -78,8 +78,10 @@ import {
   resolveTimelineMinimapTopPercent,
   type StableMessagesTimelineRowsState,
   type MessagesTimelineRow,
+  isTimelineAutoScrollEnabled,
+  TIMELINE_AUTO_SCROLL_MODE,
+  TIMELINE_EXACT_END_THRESHOLD,
   TIMELINE_MINIMAP_MIN_ITEMS,
-  TIMELINE_NEAR_END_THRESHOLD,
   type TimelineLatestTurn,
 } from "./MessagesTimeline.logic";
 import { TerminalContextInlineChip } from "./TerminalContextInlineChip";
@@ -496,7 +498,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
             {...(anchoredEndSpace ? { anchoredEndSpace } : {})}
             contentInsetEndAdjustment={contentInsetEndAdjustment}
             maintainScrollAtEnd={
-              anchoredEndSpace
+              anchoredEndSpace || !isTimelineAutoScrollEnabled(TIMELINE_AUTO_SCROLL_MODE)
                 ? false
                 : {
                     animated: false,
@@ -507,7 +509,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
                     },
                   }
             }
-            maintainScrollAtEndThreshold={TIMELINE_NEAR_END_THRESHOLD}
+            maintainScrollAtEndThreshold={TIMELINE_EXACT_END_THRESHOLD}
             maintainVisibleContentPosition={{
               data: true,
               size: false,

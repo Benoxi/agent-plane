@@ -15,19 +15,119 @@ export const TIMELINE_MINIMAP_MIN_ITEMS = 2;
 export const TIMELINE_MINIMAP_MAX_HEIGHT_CSS = "calc(100vh - 18rem)";
 export const TIMELINE_CONTENT_MAX_WIDTH = 768;
 export const TIMELINE_MINIMAP_PERSISTENT_GUTTER = 48;
-export const TIMELINE_NEAR_END_THRESHOLD = 0.1;
+export const TIMELINE_EXACT_END_THRESHOLD = 0;
+export const TIMELINE_JUMP_TIMEOUT_MS = 1_500;
+
+export type TimelineAutoScrollMode = "strict" | "disabled";
+
+// Keep this as an explicit policy switch: if exact-end tracking proves
+// unreliable on a supported surface, disabling automatic movement is safer
+// than pulling someone away from the content they are reading.
+export const TIMELINE_AUTO_SCROLL_MODE: TimelineAutoScrollMode = "strict";
 
 export interface TimelineEndState {
   readonly isAtEnd?: boolean;
   readonly isNearEnd?: boolean;
+  readonly isWithinMaintainScrollAtEndThreshold?: boolean;
 }
 
 export function resolveTimelineIsAtEnd(state: TimelineEndState | undefined): boolean | undefined {
-  return state?.isNearEnd ?? state?.isAtEnd;
+  return state?.isWithinMaintainScrollAtEndThreshold;
 }
 
-export function shouldCancelTimelineLiveFollow(isNearEnd: boolean | undefined): boolean {
-  return isNearEnd === false;
+export function isTimelineAutoScrollEnabled(mode: TimelineAutoScrollMode): boolean {
+  return mode === "strict";
+}
+
+export function shouldAutoScrollTimeline(
+  isAtEnd: boolean | undefined,
+  liveFollowActive: boolean,
+  mode: TimelineAutoScrollMode = TIMELINE_AUTO_SCROLL_MODE,
+): boolean {
+  return isTimelineAutoScrollEnabled(mode) && isAtEnd === true && liveFollowActive;
+}
+
+export function shouldCancelTimelineLiveFollow(
+  isAtEnd: boolean | undefined,
+  mode: TimelineAutoScrollMode = TIMELINE_AUTO_SCROLL_MODE,
+): boolean {
+  return !shouldAutoScrollTimeline(isAtEnd, true, mode);
+}
+
+export function shouldPositionTimelineAnchor(
+  pendingMessageId: string | null,
+  readyMessageId: string,
+  isAtEnd: boolean | undefined,
+  liveFollowActive: boolean,
+  mode: TimelineAutoScrollMode = TIMELINE_AUTO_SCROLL_MODE,
+): boolean {
+  return (
+    pendingMessageId === readyMessageId && shouldAutoScrollTimeline(isAtEnd, liveFollowActive, mode)
+  );
+}
+
+export function shouldKeepTimelineJumpPending(isAtEnd: boolean | undefined): boolean {
+  return isAtEnd !== true;
+}
+
+export interface TimelineJumpContext {
+  readonly threadKey: string | null;
+  readonly userScrollGeneration: number;
+}
+
+export type TimelineJumpResult = "confirmed" | "restore" | "stale";
+
+interface TimelineJumpToken extends TimelineJumpContext {
+  readonly operationId: number;
+}
+
+export class TimelineJumpController {
+  #nextOperationId = 1;
+  #activeToken: TimelineJumpToken | null = null;
+
+  begin(context: TimelineJumpContext): TimelineJumpToken {
+    const token = { ...context, operationId: this.#nextOperationId++ };
+    this.#activeToken = token;
+    return token;
+  }
+
+  cancel(): void {
+    this.#activeToken = null;
+  }
+
+  async awaitCompletion(input: {
+    readonly token: TimelineJumpToken;
+    readonly completion: Promise<unknown>;
+    readonly getContext: () => TimelineJumpContext;
+    readonly getIsAtEnd: () => boolean | undefined;
+    readonly timeoutMs?: number;
+  }): Promise<TimelineJumpResult> {
+    let timeoutId: ReturnType<typeof setTimeout> | null = null;
+    try {
+      await Promise.race([
+        input.completion.catch(() => undefined),
+        new Promise<void>((resolve) => {
+          timeoutId = setTimeout(resolve, input.timeoutMs ?? TIMELINE_JUMP_TIMEOUT_MS);
+        }),
+      ]);
+    } finally {
+      if (timeoutId !== null) {
+        clearTimeout(timeoutId);
+      }
+    }
+
+    const context = input.getContext();
+    if (
+      this.#activeToken !== input.token ||
+      context.threadKey !== input.token.threadKey ||
+      context.userScrollGeneration !== input.token.userScrollGeneration
+    ) {
+      return "stale";
+    }
+
+    this.#activeToken = null;
+    return input.getIsAtEnd() === true ? "confirmed" : "restore";
+  }
 }
 
 export function isTimelineLiveFollowActive(

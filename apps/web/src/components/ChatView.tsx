@@ -233,7 +233,11 @@ import {
   isTimelineLiveFollowActive,
   keyboardEventMayNavigateTimelineAwayFromEnd,
   resolveTimelineIsAtEnd,
+  shouldAutoScrollTimeline,
   shouldCancelTimelineLiveFollow,
+  shouldKeepTimelineJumpPending,
+  shouldPositionTimelineAnchor,
+  TimelineJumpController,
 } from "./chat/MessagesTimeline.logic";
 import { ChatHeader } from "./chat/ChatHeader";
 import { PanelLayoutControls, RightPanelMaximizeControl } from "./chat/PanelLayoutControls";
@@ -1346,7 +1350,7 @@ function ChatViewContent(props: ChatViewProps) {
   const legendListRef = useRef<LegendListRef | null>(null);
   const [composerOverlayElement, setComposerOverlayElement] = useState<HTMLDivElement | null>(null);
   const [composerOverlayHeight, setComposerOverlayHeight] = useState(0);
-  const isAtEndRef = useRef(true);
+  const isAtEndRef = useRef<boolean | undefined>(undefined);
   const attachmentPreviewHandoffByMessageIdRef = useRef<Record<string, string[]>>({});
   const attachmentPreviewPromotionInFlightByMessageIdRef = useRef<Record<string, true>>({});
   const sendInFlightRef = useRef(false);
@@ -3503,13 +3507,17 @@ function ChatViewContent(props: ChatViewProps) {
   const showScrollDebouncer = useRef(
     new Debouncer(() => setShowScrollToBottom(true), { wait: 150 }),
   );
-  const timelineScrollModeRef = useRef<TimelineScrollMode>("following-end");
+  const timelineScrollModeRef = useRef<TimelineScrollMode>("free-scrolling");
   const pendingTimelineAnchorRef = useRef<MessageId | null>(null);
   const positionedTimelineAnchorRef = useRef<MessageId | null>(null);
   const settledTimelineAnchorRef = useRef<MessageId | null>(null);
   const activeTimelineAnchorIndexRef = useRef<number | null>(null);
   const anchorUserScrollGenerationRef = useRef(0);
-  const liveFollowUserScrollGenerationRef = useRef<number | null>(0);
+  const liveFollowUserScrollGenerationRef = useRef<number | null>(null);
+  const pendingJumpToLatestRef = useRef(false);
+  const timelineJumpControllerRef = useRef(new TimelineJumpController());
+  const activeTimelineThreadKeyRef = useRef(activeThreadKey);
+  activeTimelineThreadKeyRef.current = activeThreadKey;
   const pendingAnchorScrollRestoreRef = useRef<{
     readonly messageId: MessageId;
     readonly offset: number;
@@ -3519,13 +3527,18 @@ function ChatViewContent(props: ChatViewProps) {
   const manualNavigationCheckFrameRef = useRef<number | null>(null);
   const cancelTimelineLiveFollowForUserNavigation = useCallback(() => {
     anchorUserScrollGenerationRef.current += 1;
+    timelineJumpControllerRef.current.cancel();
     timelineScrollModeRef.current = "free-scrolling";
     liveFollowUserScrollGenerationRef.current = null;
     pendingTimelineAnchorRef.current = null;
+    pendingJumpToLatestRef.current = false;
     positionedTimelineAnchorRef.current = null;
     settledTimelineAnchorRef.current = null;
     activeTimelineAnchorIndexRef.current = null;
     pendingAnchorScrollRestoreRef.current = null;
+    setTimelineAnchor((current) =>
+      current.messageId === null ? current : { ...current, messageId: null },
+    );
     if (anchorScrollRestoreFrameRef.current !== null) {
       cancelAnimationFrame(anchorScrollRestoreFrameRef.current);
       anchorScrollRestoreFrameRef.current = null;
@@ -3544,8 +3557,8 @@ function ChatViewContent(props: ChatViewProps) {
   }, [cancelTimelineLiveFollowForUserNavigation]);
   const cancelTimelineLiveFollowIfAwayFromEnd = useCallback(() => {
     const cancelIfAway = () => {
-      const isNearEnd = resolveTimelineIsAtEnd(legendListRef.current?.getState());
-      if (shouldCancelTimelineLiveFollow(isNearEnd)) {
+      const isAtEnd = resolveTimelineIsAtEnd(legendListRef.current?.getState());
+      if (shouldCancelTimelineLiveFollow(isAtEnd)) {
         cancelTimelineLiveFollowForUserNavigationRef.current();
         return true;
       }
@@ -3610,16 +3623,79 @@ function ChatViewContent(props: ChatViewProps) {
 
   // Live-follow stays active after send/thread-open until an actual list scroll
   // gesture opts out.
-  const scrollToEnd = useCallback((animated = false) => {
-    isAtEndRef.current = true;
-    timelineScrollModeRef.current = "following-end";
-    liveFollowUserScrollGenerationRef.current = anchorUserScrollGenerationRef.current;
-    pendingTimelineAnchorRef.current = null;
-    activeTimelineAnchorIndexRef.current = null;
-    showScrollDebouncer.current.cancel();
-    setShowScrollToBottom(false);
-    void legendListRef.current?.scrollToEnd?.({ animated });
-  }, []);
+  const scrollToEnd = useCallback(
+    async (animated = false) => {
+      const list = legendListRef.current;
+      const isAtEnd = resolveTimelineIsAtEnd(legendListRef.current?.getState());
+      isAtEndRef.current = isAtEnd;
+      const shouldFollow = shouldAutoScrollTimeline(isAtEnd, true);
+      pendingJumpToLatestRef.current = shouldKeepTimelineJumpPending(isAtEnd);
+      timelineScrollModeRef.current = shouldFollow ? "following-end" : "free-scrolling";
+      liveFollowUserScrollGenerationRef.current = shouldFollow
+        ? anchorUserScrollGenerationRef.current
+        : null;
+      pendingTimelineAnchorRef.current = null;
+      activeTimelineAnchorIndexRef.current = null;
+      showScrollDebouncer.current.cancel();
+      setShowScrollToBottom(false);
+      if (!list) {
+        pendingJumpToLatestRef.current = false;
+        setShowScrollToBottom(true);
+        return;
+      }
+
+      const token = timelineJumpControllerRef.current.begin({
+        threadKey: activeThreadKey,
+        userScrollGeneration: anchorUserScrollGenerationRef.current,
+      });
+      const result = await timelineJumpControllerRef.current.awaitCompletion({
+        token,
+        completion: Promise.resolve().then(() => list.scrollToEnd({ animated })),
+        getContext: () => ({
+          threadKey: activeTimelineThreadKeyRef.current,
+          userScrollGeneration: anchorUserScrollGenerationRef.current,
+        }),
+        getIsAtEnd: () => resolveTimelineIsAtEnd(legendListRef.current?.getState()),
+      });
+      if (result === "restore") {
+        pendingJumpToLatestRef.current = false;
+        setShowScrollToBottom(true);
+      }
+    },
+    [activeThreadKey],
+  );
+  const prepareTimelineForOutgoingMessage = useCallback(
+    (threadKey: string, messageId: MessageId) => {
+      const shouldFollow = shouldAutoScrollTimeline(
+        isAtEndRef.current,
+        isTimelineLiveFollowActive(
+          liveFollowUserScrollGenerationRef.current,
+          anchorUserScrollGenerationRef.current,
+        ),
+      );
+
+      pendingTimelineAnchorRef.current = shouldFollow ? messageId : null;
+      positionedTimelineAnchorRef.current = null;
+      settledTimelineAnchorRef.current = null;
+      activeTimelineAnchorIndexRef.current = null;
+      pendingAnchorScrollRestoreRef.current = null;
+
+      if (shouldFollow) {
+        timelineScrollModeRef.current = "anchoring-new-turn";
+        liveFollowUserScrollGenerationRef.current = anchorUserScrollGenerationRef.current;
+        showScrollDebouncer.current.cancel();
+        setShowScrollToBottom(false);
+        setTimelineAnchor({ threadKey, messageId });
+        return;
+      }
+
+      timelineScrollModeRef.current = "free-scrolling";
+      liveFollowUserScrollGenerationRef.current = null;
+      setTimelineAnchor({ threadKey, messageId: null });
+      showScrollDebouncer.current.maybeExecute();
+    },
+    [],
+  );
   useEffect(() => {
     let removeListeners: (() => void) | null = null;
     const frame = requestAnimationFrame(() => {
@@ -3628,7 +3704,7 @@ function ChatViewContent(props: ChatViewProps) {
         return;
       }
       const handleManualNavigation = () => {
-        cancelTimelineLiveFollowIfAwayFromEnd();
+        cancelTimelineLiveFollowForUserNavigationRef.current();
       };
       const handlePointerMove = (event: PointerEvent) => {
         if (event.buttons !== 0) {
@@ -3637,7 +3713,7 @@ function ChatViewContent(props: ChatViewProps) {
       };
       const handleKeyDown = (event: KeyboardEvent) => {
         if (keyboardEventMayNavigateTimelineAwayFromEnd(event)) {
-          cancelTimelineLiveFollowIfAwayFromEnd();
+          cancelTimelineLiveFollowForUserNavigationRef.current();
         }
       };
       scrollNode.addEventListener("wheel", handleManualNavigation, {
@@ -3649,13 +3725,15 @@ function ChatViewContent(props: ChatViewProps) {
       scrollNode.addEventListener("pointermove", handlePointerMove, {
         passive: true,
       });
-      scrollNode.addEventListener("pointerup", handleManualNavigation, { passive: true });
+      scrollNode.addEventListener("pointerup", cancelTimelineLiveFollowIfAwayFromEnd, {
+        passive: true,
+      });
       scrollNode.addEventListener("keydown", handleKeyDown);
       removeListeners = () => {
         scrollNode.removeEventListener("wheel", handleManualNavigation);
         scrollNode.removeEventListener("touchmove", handleManualNavigation);
         scrollNode.removeEventListener("pointermove", handlePointerMove);
-        scrollNode.removeEventListener("pointerup", handleManualNavigation);
+        scrollNode.removeEventListener("pointerup", cancelTimelineLiveFollowIfAwayFromEnd);
         scrollNode.removeEventListener("keydown", handleKeyDown);
       };
     });
@@ -3671,9 +3749,20 @@ function ChatViewContent(props: ChatViewProps) {
   }, [activeThread?.id, cancelTimelineLiveFollowIfAwayFromEnd]);
 
   const onTimelineAnchorReady = useCallback((messageId: MessageId, anchorIndex: number) => {
-    if (pendingTimelineAnchorRef.current === messageId) {
-      pendingTimelineAnchorRef.current = null;
+    if (
+      !shouldPositionTimelineAnchor(
+        pendingTimelineAnchorRef.current,
+        messageId,
+        isAtEndRef.current,
+        isTimelineLiveFollowActive(
+          liveFollowUserScrollGenerationRef.current,
+          anchorUserScrollGenerationRef.current,
+        ),
+      )
+    ) {
+      return;
     }
+    pendingTimelineAnchorRef.current = null;
     activeTimelineAnchorIndexRef.current = anchorIndex;
     if (positionedTimelineAnchorRef.current === messageId) {
       return;
@@ -3779,9 +3868,13 @@ function ChatViewContent(props: ChatViewProps) {
       setShowScrollToBottom(false);
       return;
     }
+    if (isAtEnd) {
+      pendingJumpToLatestRef.current = false;
+      timelineJumpControllerRef.current.cancel();
+    }
     if (isAtEndRef.current === isAtEnd) return;
     isAtEndRef.current = isAtEnd;
-    if (isAtEnd) {
+    if (shouldAutoScrollTimeline(isAtEnd, true)) {
       timelineScrollModeRef.current = "following-end";
       liveFollowUserScrollGenerationRef.current = anchorUserScrollGenerationRef.current;
       showScrollDebouncer.current.cancel();
@@ -3789,7 +3882,9 @@ function ChatViewContent(props: ChatViewProps) {
     } else {
       timelineScrollModeRef.current = "free-scrolling";
       liveFollowUserScrollGenerationRef.current = null;
-      showScrollDebouncer.current.maybeExecute();
+      if (isAtEnd === false && !pendingJumpToLatestRef.current) {
+        showScrollDebouncer.current.maybeExecute();
+      }
     }
   }, []);
 
@@ -3798,9 +3893,12 @@ function ChatViewContent(props: ChatViewProps) {
       return;
     }
     if (
-      !isTimelineLiveFollowActive(
-        liveFollowUserScrollGenerationRef.current,
-        anchorUserScrollGenerationRef.current,
+      !shouldAutoScrollTimeline(
+        isAtEndRef.current,
+        isTimelineLiveFollowActive(
+          liveFollowUserScrollGenerationRef.current,
+          anchorUserScrollGenerationRef.current,
+        ),
       )
     ) {
       return;
@@ -3810,9 +3908,12 @@ function ChatViewContent(props: ChatViewProps) {
     const frame = requestAnimationFrame(() => {
       secondFrame = requestAnimationFrame(() => {
         if (
-          !isTimelineLiveFollowActive(
-            liveFollowUserScrollGenerationRef.current,
-            anchorUserScrollGenerationRef.current,
+          !shouldAutoScrollTimeline(
+            isAtEndRef.current,
+            isTimelineLiveFollowActive(
+              liveFollowUserScrollGenerationRef.current,
+              anchorUserScrollGenerationRef.current,
+            ),
           )
         ) {
           return;
@@ -3871,9 +3972,11 @@ function ChatViewContent(props: ChatViewProps) {
 
   useEffect(() => {
     setPullRequestDialogState(null);
-    isAtEndRef.current = true;
-    timelineScrollModeRef.current = "following-end";
-    liveFollowUserScrollGenerationRef.current = anchorUserScrollGenerationRef.current;
+    isAtEndRef.current = undefined;
+    timelineScrollModeRef.current = "free-scrolling";
+    liveFollowUserScrollGenerationRef.current = null;
+    timelineJumpControllerRef.current.cancel();
+    pendingJumpToLatestRef.current = false;
     pendingTimelineAnchorRef.current = null;
     positionedTimelineAnchorRef.current = null;
     settledTimelineAnchorRef.current = null;
@@ -4835,20 +4938,13 @@ function ChatViewContent(props: ChatViewProps) {
       sizeBytes: image.sizeBytes,
       previewUrl: image.previewUrl,
     }));
-    // Sending always returns to the live edge. The new row becomes the
-    // anchored end-space target so it lands near the top while the response
-    // streams into the reserved space below it.
-    isAtEndRef.current = true;
-    timelineScrollModeRef.current = "anchoring-new-turn";
-    liveFollowUserScrollGenerationRef.current = anchorUserScrollGenerationRef.current;
-    pendingTimelineAnchorRef.current = messageIdForSend;
-    activeTimelineAnchorIndexRef.current = null;
-    showScrollDebouncer.current.cancel();
-    setShowScrollToBottom(false);
-    setTimelineAnchor({
-      threadKey: scopedThreadKey(scopeThreadRef(activeThread.environmentId, threadIdForSend)),
-      messageId: messageIdForSend,
-    });
+    // Sending joins the live edge only when the user was already following
+    // the exact bottom. Otherwise the outgoing row accumulates below the
+    // preserved reading position and the jump action becomes available.
+    prepareTimelineForOutgoingMessage(
+      scopedThreadKey(scopeThreadRef(activeThread.environmentId, threadIdForSend)),
+      messageIdForSend,
+    );
     setOptimisticUserMessages((existing) => [
       ...existing,
       {
@@ -5362,18 +5458,10 @@ function ChatViewContent(props: ChatViewProps) {
       beginLocalDispatch({ preparingWorktree: false });
       setThreadError(threadIdForSend, null);
 
-      // Position this sent row once LegendList has measured the anchored tail.
-      isAtEndRef.current = true;
-      timelineScrollModeRef.current = "anchoring-new-turn";
-      liveFollowUserScrollGenerationRef.current = anchorUserScrollGenerationRef.current;
-      pendingTimelineAnchorRef.current = messageIdForSend;
-      activeTimelineAnchorIndexRef.current = null;
-      showScrollDebouncer.current.cancel();
-      setShowScrollToBottom(false);
-      setTimelineAnchor({
-        threadKey: scopedThreadKey(scopeThreadRef(activeThread.environmentId, threadIdForSend)),
-        messageId: messageIdForSend,
-      });
+      prepareTimelineForOutgoingMessage(
+        scopedThreadKey(scopeThreadRef(activeThread.environmentId, threadIdForSend)),
+        messageIdForSend,
+      );
 
       setOptimisticUserMessages((existing) => [
         ...existing,
@@ -5473,6 +5561,7 @@ function ChatViewContent(props: ChatViewProps) {
       isServerThread,
       localCheckoutBranchMismatch,
       persistThreadSettingsForNextTurn,
+      prepareTimelineForOutgoingMessage,
       resetLocalDispatch,
       runtimeMode,
       setComposerDraftInteractionMode,
@@ -6037,13 +6126,13 @@ function ChatViewContent(props: ChatViewProps) {
                 >
                   <button
                     type="button"
-                    aria-label="Scroll to end"
-                    title="Scroll to end"
-                    onClick={() => scrollToEnd(true)}
+                    aria-label="Jump to latest"
+                    title="Jump to latest"
+                    onClick={() => void scrollToEnd(true)}
                     className="chat-composer-glass pointer-events-auto flex items-center gap-1.5 rounded-full border border-border/60 px-3 py-1 text-muted-foreground text-xs shadow-sm transition-colors hover:border-border hover:text-foreground hover:cursor-pointer"
                   >
                     <ChevronDownIcon className="size-3.5" />
-                    Scroll to end
+                    Jump to latest
                   </button>
                 </div>
               )}
