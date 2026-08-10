@@ -1588,8 +1588,9 @@ export default function SidebarV2() {
     [],
   );
   const openClaudeImportDialog = useCallback((member: SidebarProjectGroupMember) => {
+    const importTarget = claudeSessionImportTargetForProject(member);
     setProjectActionsTarget(null);
-    setClaudeImportTarget(claudeSessionImportTargetForProject(member));
+    window.requestAnimationFrame(() => setClaudeImportTarget(importTarget));
   }, []);
 
   // Settled threads stay in the live shell stream (settled ≠ archived), so
