@@ -2,7 +2,10 @@ import { MessageId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import type { ThreadFeedEntry } from "./threadActivity";
-import { formatMobileConversationForClipboard } from "./conversationCopy";
+import {
+  formatMobileConversationForClipboard,
+  mobileConversationHasCopyableContent,
+} from "./conversationCopy";
 
 const CREATED_AT = "2026-08-07T10:00:00.000Z";
 
@@ -44,8 +47,9 @@ describe("formatMobileConversationForClipboard", () => {
             turnId: null,
             summary: "Connected",
             detail: null,
-            fullDetail: null,
-            copyText: "Connected",
+            canExpand: false,
+            getFullDetail: () => null,
+            getCopyText: () => "Connected",
             icon: "message",
             toolLike: false,
             status: null,
@@ -56,8 +60,9 @@ describe("formatMobileConversationForClipboard", () => {
             turnId: null,
             summary: "Ran tests",
             detail: "14 tests passed",
-            fullDetail: null,
-            copyText: "Ran tests\n14 tests passed",
+            canExpand: false,
+            getFullDetail: () => null,
+            getCopyText: () => "Ran tests\n14 tests passed",
             icon: "command",
             toolLike: true,
             status: "success",
@@ -90,5 +95,37 @@ describe("formatMobileConversationForClipboard", () => {
 
   it("returns an empty value when the feed has no copyable content", () => {
     expect(formatMobileConversationForClipboard({ title: "Empty", entries: [] })).toBe("");
+  });
+
+  it("checks copy availability without evaluating lazy tool output", () => {
+    const entries: ThreadFeedEntry[] = [
+      {
+        type: "activity-group",
+        id: "activity-entry",
+        createdAt: CREATED_AT,
+        turnId: null,
+        activities: [
+          {
+            id: "lazy-tool",
+            createdAt: CREATED_AT,
+            turnId: null,
+            summary: "Large tool output",
+            detail: null,
+            canExpand: true,
+            getFullDetail: () => {
+              throw new Error("full detail should remain lazy");
+            },
+            getCopyText: () => {
+              throw new Error("copy text should remain lazy");
+            },
+            icon: "command",
+            toolLike: true,
+            status: "success",
+          },
+        ],
+      },
+    ];
+
+    expect(mobileConversationHasCopyableContent(entries)).toBe(true);
   });
 });

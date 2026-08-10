@@ -12,6 +12,19 @@ function messageBody(entry: Extract<ThreadFeedEntry, { type: "message" }>): stri
   return [entry.message.text.trim(), ...attachmentLines].filter(Boolean).join("\n\n");
 }
 
+export function mobileConversationHasCopyableContent(
+  entries: ReadonlyArray<ThreadFeedEntry>,
+): boolean {
+  return entries.some((entry) => {
+    if (entry.type === "message") {
+      return entry.message.text.trim().length > 0 || (entry.message.attachments?.length ?? 0) > 0;
+    }
+    return (
+      entry.type === "activity-group" && entry.activities.some((activity) => activity.toolLike)
+    );
+  });
+}
+
 export function formatMobileConversationForClipboard(input: {
   readonly title: string;
   readonly entries: ReadonlyArray<ThreadFeedEntry>;
@@ -29,7 +42,7 @@ export function formatMobileConversationForClipboard(input: {
     if (entry.type === "activity-group") {
       for (const activity of entry.activities) {
         if (!activity.toolLike) continue;
-        const formatted = section("Tool output", activity.copyText);
+        const formatted = section("Tool output", activity.getCopyText());
         if (formatted) sections.push(formatted);
       }
     }
