@@ -37,6 +37,7 @@ import {
   clampCollapsedComposerCursor,
   type ComposerTrigger,
   collapseExpandedComposerCursor,
+  dispatchExplicitComposerSend,
   deriveCollapsedComposerPrimaryAction,
   detectComposerTrigger,
   expandCollapsedComposerCursor,
@@ -79,6 +80,7 @@ import {
 import { useComposerPathSearch } from "../../lib/composerPathSearchState";
 import { type ElementContextDraft } from "../../lib/elementContext";
 import {
+  type ComposerSpeechRecognition,
   createComposerSpeechRecognition,
   detectSpeechRecognitionSupport,
 } from "../../lib/speechRecognition";
@@ -1112,9 +1114,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const mobileComposerExpandReleaseFrameRef = useRef<number | null>(null);
   const mobileComposerExpandInFlightRef = useRef(false);
   const dragDepthRef = useRef(0);
-  const speechRecognitionRef = useRef<ReturnType<typeof createComposerSpeechRecognition> | null>(
-    null,
-  );
+  const speechRecognitionRef = useRef<ComposerSpeechRecognition | null>(null);
   const voiceTimeoutRef = useRef<number | null>(null);
   const voiceTickerRef = useRef<number | null>(null);
   const voiceFinalTextRef = useRef("");
@@ -1794,6 +1794,44 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     }
   }, []);
 
+  const resetVoiceDictation = useCallback(
+    (
+      recognition: ComposerSpeechRecognition | null,
+      options: { abort: boolean; updateUi: boolean },
+    ): boolean => {
+      if (recognition !== null && speechRecognitionRef.current !== recognition) {
+        return false;
+      }
+
+      speechRecognitionRef.current = null;
+      clearVoiceTimers();
+      voiceFinalTextRef.current = "";
+      voiceErroredRef.current = false;
+      if (options.updateUi) {
+        setVoiceElapsedSeconds(0);
+        setVoiceState("idle");
+      }
+      try {
+        recognition?.dispose({ abort: options.abort });
+      } catch {
+        // Browsers may throw if recognition already ended. State and handlers
+        // are cleared first so teardown still remains final.
+      }
+      return true;
+    },
+    [clearVoiceTimers],
+  );
+
+  const cancelVoiceDictation = useCallback(
+    (options?: { updateUi?: boolean }) => {
+      resetVoiceDictation(speechRecognitionRef.current, {
+        abort: true,
+        updateUi: options?.updateUi !== false,
+      });
+    },
+    [resetVoiceDictation],
+  );
+
   const insertDictationText = useCallback(
     (rawText: string) => {
       const transcript = rawText.trim();
@@ -1844,44 +1882,39 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     setVoiceElapsedSeconds(0);
     setVoiceState("listening");
 
-    const recognition = createComposerSpeechRecognition({
-      language: globalThis.navigator?.language || "en-US",
-      onFinalText: (text) => {
-        voiceFinalTextRef.current = text;
-      },
-      onInterimText: () => undefined,
-      onError: (message) => {
-        voiceErroredRef.current = true;
-        clearVoiceTimers();
-        speechRecognitionRef.current = null;
-        voiceFinalTextRef.current = "";
-        setVoiceElapsedSeconds(0);
-        setVoiceState("idle");
-        toastManager.add({ type: "error", title: "Voice dictation failed", description: message });
-      },
-      onEnd: () => {
-        const finalText = voiceFinalTextRef.current;
-        const errored = voiceErroredRef.current;
-        clearVoiceTimers();
-        speechRecognitionRef.current = null;
-        voiceFinalTextRef.current = "";
-        voiceErroredRef.current = false;
-        setVoiceElapsedSeconds(0);
-        setVoiceState("idle");
-        if (!errored) insertDictationText(finalText);
-      },
-    });
-
-    speechRecognitionRef.current = recognition;
+    let recognition: ComposerSpeechRecognition | null = null;
     try {
+      recognition = createComposerSpeechRecognition({
+        language: globalThis.navigator?.language || "en-US",
+        onFinalText: (text) => {
+          if (speechRecognitionRef.current !== recognition) return;
+          voiceFinalTextRef.current = text;
+        },
+        onInterimText: () => undefined,
+        onError: (message) => {
+          if (speechRecognitionRef.current !== recognition || recognition === null) return;
+          voiceErroredRef.current = true;
+          resetVoiceDictation(recognition, { abort: true, updateUi: true });
+          toastManager.add({
+            type: "error",
+            title: "Voice dictation failed",
+            description: message,
+          });
+        },
+        onEnd: () => {
+          if (speechRecognitionRef.current !== recognition || recognition === null) return;
+          const finalText = voiceFinalTextRef.current;
+          const errored = voiceErroredRef.current;
+          if (!resetVoiceDictation(recognition, { abort: false, updateUi: true })) return;
+          if (!errored) {
+            insertDictationText(finalText);
+          }
+        },
+      });
+      speechRecognitionRef.current = recognition;
       recognition.start();
     } catch (cause) {
-      clearVoiceTimers();
-      speechRecognitionRef.current = null;
-      voiceFinalTextRef.current = "";
-      voiceErroredRef.current = false;
-      setVoiceElapsedSeconds(0);
-      setVoiceState("idle");
+      resetVoiceDictation(recognition, { abort: true, updateUi: true });
       toastManager.add({
         type: "error",
         title: "Voice dictation failed",
@@ -1896,7 +1929,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     voiceTimeoutRef.current = window.setTimeout(() => {
       stopVoiceDictation();
     }, VOICE_DICTATION_MAX_SECONDS * 1000);
-  }, [clearVoiceTimers, insertDictationText, stopVoiceDictation]);
+  }, [insertDictationText, resetVoiceDictation, stopVoiceDictation]);
 
   const toggleVoiceDictation = useCallback(() => {
     if (voiceState === "listening" || voiceState === "stopping") {
@@ -1905,6 +1938,16 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     }
     startVoiceDictation();
   }, [startVoiceDictation, stopVoiceDictation, voiceState]);
+
+  useLayoutEffect(() => {
+    cancelVoiceDictation();
+  }, [
+    cancelVoiceDictation,
+    draftId,
+    routeKind,
+    routeThreadRef.environmentId,
+    routeThreadRef.threadId,
+  ]);
 
   const voiceDictation = useMemo(() => {
     const support = detectSpeechRecognitionSupport();
@@ -2120,7 +2163,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         });
         return;
       }
-      onSend(event);
+      dispatchExplicitComposerSend({
+        cancelVoiceDictation,
+        send: () => onSend(event),
+      });
       if (shouldBlurMobileComposerOnSubmit()) {
         blurMobileComposerAfterSend();
       }
@@ -2128,6 +2174,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     [
       activeThreadId,
       blurMobileComposerAfterSend,
+      cancelVoiceDictation,
       isSendDisabled,
       noProviderAvailable,
       onSend,
@@ -2815,9 +2862,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
 
   useEffect(() => {
     return () => {
-      speechRecognitionRef.current?.abort();
-      speechRecognitionRef.current = null;
-      clearVoiceTimers();
+      cancelVoiceDictation({ updateUi: false });
       if (composerBlurFrameRef.current !== null) {
         window.cancelAnimationFrame(composerBlurFrameRef.current);
       }
@@ -2828,7 +2873,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         window.cancelAnimationFrame(mobileComposerExpandReleaseFrameRef.current);
       }
     };
-  }, [clearVoiceTimers]);
+  }, [cancelVoiceDictation]);
 
   // ------------------------------------------------------------------
   // Imperative handle

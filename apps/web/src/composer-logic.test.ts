@@ -3,6 +3,7 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   clampCollapsedComposerCursor,
   collapseExpandedComposerCursor,
+  dispatchExplicitComposerSend,
   deriveCollapsedComposerPrimaryAction,
   detectComposerTrigger,
   expandCollapsedComposerCursor,
@@ -13,6 +14,22 @@ import {
   shouldSubmitComposerOnEnter,
 } from "./composer-logic";
 import { INLINE_TERMINAL_CONTEXT_PLACEHOLDER } from "./lib/terminalContext";
+
+describe("dispatchExplicitComposerSend", () => {
+  it.each(["form submit", "Enter", "collapsed send"])(
+    "cancels dictation before the shared %s path sends",
+    () => {
+      const calls: string[] = [];
+
+      dispatchExplicitComposerSend({
+        cancelVoiceDictation: () => calls.push("cancel"),
+        send: () => calls.push("send"),
+      });
+
+      expect(calls).toEqual(["cancel", "send"]);
+    },
+  );
+});
 
 describe("shouldSubmitComposerOnEnter", () => {
   it("submits plain Enter on desktop", () => {

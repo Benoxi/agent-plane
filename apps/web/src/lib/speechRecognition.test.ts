@@ -233,4 +233,83 @@ describe("speechRecognition", () => {
     expect(onError).toHaveBeenCalledWith("No speech detected.");
     expect(onEnd).toHaveBeenCalledOnce();
   });
+
+  it("aborts and ignores late callbacks after disposal during interim delivery", () => {
+    const instances: FakeSpeechRecognition[] = [];
+    class CapturingSpeechRecognition extends FakeSpeechRecognition {
+      constructor() {
+        super();
+        instances.push(this);
+      }
+    }
+    installWindow({ SpeechRecognition: CapturingSpeechRecognition });
+    const onFinalText = vi.fn();
+    const onInterimText = vi.fn();
+    const onError = vi.fn();
+    const onEnd = vi.fn();
+    const recognizer = createComposerSpeechRecognition({
+      language: "en-US",
+      onFinalText,
+      onInterimText,
+      onError,
+      onEnd,
+    });
+    const instance = instances[0]!;
+
+    instance.dispatchEvent(
+      Object.assign(new Event("result"), makeRecognitionEvent([makeResult("drafting", false)])),
+    );
+    expect(onInterimText).toHaveBeenLastCalledWith("drafting");
+
+    recognizer.dispose();
+    recognizer.dispose();
+    instance.dispatchEvent(
+      Object.assign(new Event("result"), makeRecognitionEvent([makeResult("too late", true)])),
+    );
+    instance.dispatchEvent(Object.assign(new Event("error"), { error: "network" }));
+    instance.dispatchEvent(new Event("end"));
+
+    expect(instance.abort).toHaveBeenCalledOnce();
+    expect(onFinalText).not.toHaveBeenCalled();
+    expect(onInterimText).toHaveBeenCalledOnce();
+    expect(onError).not.toHaveBeenCalled();
+    expect(onEnd).not.toHaveBeenCalled();
+  });
+
+  it("stops final-result delivery immediately when disposal occurs in its callback", () => {
+    const instances: FakeSpeechRecognition[] = [];
+    class CapturingSpeechRecognition extends FakeSpeechRecognition {
+      constructor() {
+        super();
+        instances.push(this);
+      }
+    }
+    installWindow({ SpeechRecognition: CapturingSpeechRecognition });
+    let recognizer: ReturnType<typeof createComposerSpeechRecognition>;
+    const onFinalText = vi.fn(() => recognizer.dispose());
+    const onInterimText = vi.fn();
+    const onError = vi.fn();
+    const onEnd = vi.fn();
+    recognizer = createComposerSpeechRecognition({
+      language: "en-US",
+      onFinalText,
+      onInterimText,
+      onError,
+      onEnd,
+    });
+    const instance = instances[0]!;
+
+    instance.dispatchEvent(
+      Object.assign(
+        new Event("result"),
+        makeRecognitionEvent([makeResult("already final", true), makeResult("too late", false)]),
+      ),
+    );
+    instance.dispatchEvent(new Event("end"));
+
+    expect(onFinalText).toHaveBeenCalledWith("already final");
+    expect(onInterimText).not.toHaveBeenCalled();
+    expect(onEnd).not.toHaveBeenCalled();
+    expect(instance.abort).toHaveBeenCalledOnce();
+  });
 });
