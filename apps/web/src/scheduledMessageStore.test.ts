@@ -103,7 +103,7 @@ describe("scheduledMessageStore", () => {
     expect(message?.source).toBeUndefined();
   });
 
-  it("keeps overdue pending items retryable and expires interrupted sends on hydration", async () => {
+  it("expires overdue pending items and interrupted sends on hydration", async () => {
     const storage = createLocalStorageStub();
     storage.setItem(
       "t3code:scheduled-messages:v1",
@@ -154,7 +154,8 @@ describe("scheduledMessageStore", () => {
     expect(store.readScheduledMessages()).toEqual([
       expect.objectContaining({
         id: "pending-overdue",
-        status: "pending",
+        status: "expired",
+        lastError: expect.stringContaining("app was closed"),
       }),
       expect.objectContaining({
         id: "sending",
@@ -392,6 +393,7 @@ describe("scheduledMessageStore", () => {
       }),
     );
 
+    vi.resetModules();
     const reloadedStore = await import("./scheduledMessageStore");
     expect(reloadedStore.readScheduledMessages()[0]).toEqual(
       expect.objectContaining({
@@ -399,5 +401,42 @@ describe("scheduledMessageStore", () => {
         summary: expect.objectContaining({ imageCount: 1 }),
       }),
     );
+  });
+
+  it("does not install an item in memory when persistence fails", async () => {
+    const storage = createLocalStorageStub();
+    const setItem = vi.spyOn(storage, "setItem");
+    const store = await loadStoreWithStorage(storage);
+    expect(store.readScheduledMessages()).toEqual([]);
+    setItem.mockImplementation(() => {
+      throw new DOMException("Quota exceeded", "QuotaExceededError");
+    });
+
+    expect(() =>
+      store.scheduleThreadMessage({
+        environmentId: EnvironmentId.make("environment-local"),
+        threadId: ThreadId.make("thread-1"),
+        text: "image",
+        outgoingText: "image",
+        attachments: [
+          {
+            type: "image",
+            name: "large.png",
+            mimeType: "image/png",
+            sizeBytes: 4_000_000,
+            dataUrl: "data:image/png;base64,abc",
+          },
+        ],
+        titleSeed: "image",
+        modelSelection: {
+          instanceId: ProviderInstanceId.make("codex"),
+          model: "gpt-5.4",
+        },
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        delaySeconds: 30,
+      }),
+    ).toThrow();
+    expect(store.readScheduledMessages()).toEqual([]);
   });
 });

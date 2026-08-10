@@ -268,6 +268,7 @@ import {
   deriveComposerSendState,
   dismissBranchMismatchForSession,
   hasServerAcknowledgedLocalDispatch,
+  isComposerPayloadSnapshotCurrent,
   isBranchMismatchDismissedForSession,
   shouldShowBranchMismatchBanner,
   getStartedThreadModelChangeBlockReason,
@@ -5202,31 +5203,42 @@ function ChatViewContent(props: ChatViewProps) {
           titleSeed = "New thread";
         }
       }
-      const scheduledMessage = scheduleThreadMessage({
-        environmentId: activeThread.environmentId,
-        threadId: activeThread.id,
-        text: trimmed,
-        outgoingText: formatOutgoingPrompt({
-          provider: ctxSelectedProvider,
-          model: ctxSelectedModel,
-          models: ctxSelectedProviderModels,
-          effort: ctxSelectedPromptEffort,
-          text: messageTextForSend || IMAGE_ONLY_BOOTSTRAP_PROMPT,
-        }),
-        attachments: attachmentsResult.value,
-        summary: {
-          imageCount: composerImagesSnapshot.length,
-          terminalContextCount: composerTerminalContextsSnapshot.length,
-          elementContextCount: composerElementContextsSnapshot.length,
-          previewAnnotationCount: composerPreviewAnnotationsSnapshot.length,
-          reviewCommentCount: composerReviewCommentsSnapshot.length,
-        },
-        titleSeed: truncate(titleSeed),
-        modelSelection: ctxSelectedModelSelection,
-        runtimeMode,
-        interactionMode,
-        delaySeconds,
-      });
+      let scheduledMessage;
+      try {
+        scheduledMessage = scheduleThreadMessage({
+          environmentId: activeThread.environmentId,
+          threadId: activeThread.id,
+          text: trimmed,
+          outgoingText: formatOutgoingPrompt({
+            provider: ctxSelectedProvider,
+            model: ctxSelectedModel,
+            models: ctxSelectedProviderModels,
+            effort: ctxSelectedPromptEffort,
+            text: messageTextForSend || IMAGE_ONLY_BOOTSTRAP_PROMPT,
+          }),
+          attachments: attachmentsResult.value,
+          summary: {
+            imageCount: composerImagesSnapshot.length,
+            terminalContextCount: composerTerminalContextsSnapshot.length,
+            elementContextCount: composerElementContextsSnapshot.length,
+            previewAnnotationCount: composerPreviewAnnotationsSnapshot.length,
+            reviewCommentCount: composerReviewCommentsSnapshot.length,
+          },
+          titleSeed: truncate(titleSeed),
+          modelSelection: ctxSelectedModelSelection,
+          runtimeMode,
+          interactionMode,
+          delaySeconds,
+        });
+      } catch (error) {
+        setThreadError(
+          activeThread.id,
+          error instanceof Error
+            ? `Could not persist scheduled message: ${error.message}`
+            : "Could not persist scheduled message. Free browser storage and try again.",
+        );
+        return;
+      }
       if (expiredTerminalContextCount > 0) {
         const toastCopy = buildExpiredTerminalContextToastCopy(
           expiredTerminalContextCount,
@@ -5241,9 +5253,32 @@ function ChatViewContent(props: ChatViewProps) {
         );
       }
 
-      promptRef.current = "";
-      clearComposerDraftContent(composerDraftTarget);
-      composerRef.current?.resetCursorState();
+      const currentSendCtx = composerRef.current?.getSendContext();
+      const capturedPayloadIsStillCurrent =
+        currentSendCtx !== undefined &&
+        isComposerPayloadSnapshotCurrent({
+          snapshotPrompt: promptForSend,
+          currentPrompt: promptRef.current,
+          snapshotItemIds: [
+            composerImagesSnapshot.map((item) => item.id),
+            composerTerminalContextsSnapshot.map((item) => item.id),
+            composerElementContextsSnapshot.map((item) => item.id),
+            composerPreviewAnnotationsSnapshot.map((item) => item.id),
+            composerReviewCommentsSnapshot.map((item) => item.id),
+          ],
+          currentItemIds: [
+            currentSendCtx.images.map((item) => item.id),
+            currentSendCtx.terminalContexts.map((item) => item.id),
+            currentSendCtx.elementContexts.map((item) => item.id),
+            currentSendCtx.previewAnnotations.map((item) => item.id),
+            currentSendCtx.reviewComments.map((item) => item.id),
+          ],
+        });
+      if (capturedPayloadIsStillCurrent) {
+        promptRef.current = "";
+        clearComposerDraftContent(composerDraftTarget);
+        composerRef.current?.resetCursorState();
+      }
       setThreadError(activeThread.id, null);
       toastManager.add(
         stackedThreadToast({

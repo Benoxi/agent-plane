@@ -54,19 +54,24 @@ function RateLimitAutoContinueThreadWatcher(props: { threadRef: ScopedThreadRef 
         continue;
       }
 
-      scheduleThreadMessage({
-        environmentId: threadRef.environmentId,
-        threadId: threadRef.threadId,
-        text: RATE_LIMIT_AUTO_CONTINUE_TEXT,
-        outgoingText: RATE_LIMIT_AUTO_CONTINUE_TEXT,
-        titleSeed: RATE_LIMIT_AUTO_CONTINUE_TEXT,
-        modelSelection: thread.modelSelection,
-        runtimeMode: thread.runtimeMode,
-        interactionMode: thread.interactionMode,
-        delaySeconds: RATE_LIMIT_AUTO_CONTINUE_DELAY_SECONDS,
-        source: RATE_LIMIT_AUTO_CONTINUE_SOURCE,
-        sourceActivityId: activity.id,
-      });
+      try {
+        scheduleThreadMessage({
+          environmentId: threadRef.environmentId,
+          threadId: threadRef.threadId,
+          text: RATE_LIMIT_AUTO_CONTINUE_TEXT,
+          outgoingText: RATE_LIMIT_AUTO_CONTINUE_TEXT,
+          titleSeed: RATE_LIMIT_AUTO_CONTINUE_TEXT,
+          modelSelection: thread.modelSelection,
+          runtimeMode: thread.runtimeMode,
+          interactionMode: thread.interactionMode,
+          delaySeconds: RATE_LIMIT_AUTO_CONTINUE_DELAY_SECONDS,
+          source: RATE_LIMIT_AUTO_CONTINUE_SOURCE,
+          sourceActivityId: activity.id,
+        });
+      } catch (error) {
+        console.error("Could not persist rate-limit auto-continue.", error);
+        continue;
+      }
       hasPendingAutoContinue = true;
       processedActivityIdsRef.current.add(activity.id);
     }

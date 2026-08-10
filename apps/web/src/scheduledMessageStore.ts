@@ -108,7 +108,7 @@ function sortItems(items: ReadonlyArray<ScheduledMessage>): ScheduledMessage[] {
 
 export function hydrateScheduledMessageState(
   input: ScheduledMessageState,
-  _now = new Date(),
+  now = new Date(),
 ): ScheduledMessageState {
   const items = sortItems(
     input.items.map((item) => {
@@ -117,6 +117,13 @@ export function hydrateScheduledMessageState(
           ...item,
           status: "expired" as const,
           lastError: "Sending was interrupted before the app finished dispatching this message.",
+        };
+      }
+      if (item.status === "pending" && Date.parse(item.scheduledFor) <= now.getTime()) {
+        return {
+          ...item,
+          status: "expired" as const,
+          lastError: "This scheduled message became due while the app was closed.",
         };
       }
       return item;
@@ -135,11 +142,7 @@ function readPersistedState(): ScheduledMessageState {
 }
 
 function writePersistedState(nextState: ScheduledMessageState) {
-  try {
-    setLocalStorageItem(SCHEDULED_MESSAGE_STORAGE_KEY, nextState, ScheduledMessageState);
-  } catch (error) {
-    console.error("Could not write scheduled messages.", error);
-  }
+  setLocalStorageItem(SCHEDULED_MESSAGE_STORAGE_KEY, nextState, ScheduledMessageState);
 }
 
 function notifyListeners() {
@@ -149,10 +152,10 @@ function notifyListeners() {
 }
 
 function replaceState(nextState: ScheduledMessageState, options?: { persist?: boolean }) {
-  state = nextState;
   if (options?.persist !== false) {
     writePersistedState(nextState);
   }
+  state = nextState;
   notifyListeners();
 }
 
@@ -162,7 +165,11 @@ function ensureHydrated() {
   }
   hydrated = true;
   state = hydrateScheduledMessageState(readPersistedState());
-  writePersistedState(state);
+  try {
+    writePersistedState(state);
+  } catch (error) {
+    console.error("Could not normalize persisted scheduled messages.", error);
+  }
 }
 
 function ensureStorageListener() {
