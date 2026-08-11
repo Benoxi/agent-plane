@@ -18,7 +18,6 @@ vi.mock("@legendapp/list/react", async () => {
       anchorMaxSize?: number;
       anchorOffset?: number;
       onReady?: (info: { anchorIndex: number }) => void;
-      onSizeChanged?: (size: number) => void;
     };
     contentInsetEndAdjustment?: number;
     className?: string;
@@ -43,7 +42,6 @@ vi.mock("@legendapp/list/react", async () => {
     ref?: Ref<LegendListRef>;
   }) => {
     if (props.anchoredEndSpace) {
-      props.anchoredEndSpace.onSizeChanged?.(240);
       props.anchoredEndSpace.onReady?.({ anchorIndex: props.anchoredEndSpace.anchorIndex });
     }
     return (
@@ -90,6 +88,11 @@ vi.mock("@legendapp/list/react", async () => {
         data-maintain-visible-content-position-size={
           typeof props.maintainVisibleContentPosition === "object"
             ? props.maintainVisibleContentPosition.size
+            : undefined
+        }
+        data-maintain-visible-content-position-restore={
+          typeof props.maintainVisibleContentPosition === "object"
+            ? Boolean(props.maintainVisibleContentPosition.shouldRestorePosition)
             : undefined
         }
       >
@@ -194,8 +197,8 @@ function buildProps() {
     workspaceRoot: undefined,
     anchorMessageId: null,
     onAnchorReady: () => {},
-    onAnchorSizeChanged: () => {},
     contentInsetEndAdjustment: 0,
+    liveFollowEnabled: true,
     onIsAtEndChange: () => {},
     onManualNavigation: () => {},
   };
@@ -298,13 +301,9 @@ describe("MessagesTimeline", () => {
     expect(markup).toContain("1 changed file");
   });
 
-  it("uses only the exact LegendList end state for live-follow", async () => {
+  it("treats only the strict list end as the live edge", async () => {
     const {
       resolveTimelineIsAtEnd,
-      shouldCancelTimelineLiveFollow,
-      shouldKeepTimelineJumpPending,
-      shouldPositionTimelineAnchor,
-      TIMELINE_EXACT_END_THRESHOLD,
       resolveTimelineMinimapHasPersistentGutter,
       resolveTimelineMinimapHeightStyle,
       resolveTimelineMinimapHitStripWidth,
@@ -313,32 +312,36 @@ describe("MessagesTimeline", () => {
       resolveTimelineMinimapTopPercent,
     } = await import("./MessagesTimeline.logic");
 
+    expect(resolveTimelineIsAtEnd({ isAtEnd: true })).toBe(true);
+    expect(resolveTimelineIsAtEnd(undefined)).toBeUndefined();
+    // Even a small gap above the content bottom is not the live edge.
     expect(
       resolveTimelineIsAtEnd({
-        isNearEnd: true,
-        isAtEnd: true,
-        isWithinMaintainScrollAtEndThreshold: false,
+        isAtEnd: false,
+        contentLength: 2000,
+        scroll: 1170,
+        scrollLength: 800,
       }),
     ).toBe(false);
+    // ...but half a viewport up (LegendList's isNearEnd territory) does not.
     expect(
       resolveTimelineIsAtEnd({
-        isNearEnd: false,
         isAtEnd: false,
-        isWithinMaintainScrollAtEndThreshold: true,
+        contentLength: 2000,
+        scroll: 900,
+        scrollLength: 800,
       }),
+    ).toBe(false);
+    // The composer inset is part of contentLength and must not count as
+    // distance-to-end.
+    expect(
+      resolveTimelineIsAtEnd(
+        { isAtEnd: false, contentLength: 2100, scroll: 1200, scrollLength: 800 },
+        100,
+      ),
     ).toBe(true);
-    expect(resolveTimelineIsAtEnd({ isAtEnd: true })).toBeUndefined();
-    expect(resolveTimelineIsAtEnd(undefined)).toBeUndefined();
-    expect(TIMELINE_EXACT_END_THRESHOLD).toBe(0);
-    expect(shouldCancelTimelineLiveFollow(true)).toBe(false);
-    expect(shouldCancelTimelineLiveFollow(false)).toBe(true);
-    expect(shouldCancelTimelineLiveFollow(undefined)).toBe(true);
-    expect(shouldPositionTimelineAnchor("message-1", "message-1", true, true)).toBe(true);
-    expect(shouldPositionTimelineAnchor(null, "message-1", true, true)).toBe(false);
-    expect(shouldPositionTimelineAnchor("message-1", "message-1", true, false)).toBe(false);
-    expect(shouldKeepTimelineJumpPending(undefined)).toBe(true);
-    expect(shouldKeepTimelineJumpPending(false)).toBe(true);
-    expect(shouldKeepTimelineJumpPending(true)).toBe(false);
+    // Geometry missing (older state shape): fall back to the strict flag.
+    expect(resolveTimelineIsAtEnd({ isAtEnd: false })).toBe(false);
 
     expect(resolveTimelineMinimapHeightStyle(5)).toBe("min(32px, calc(100vh - 18rem))");
     expect(resolveTimelineMinimapTopPercent(2, 5)).toBe(50);
@@ -385,63 +388,8 @@ describe("MessagesTimeline", () => {
     expect(resolveTimelineMinimapInteractiveWidth(40, true)).toBe("22rem");
   });
 
-  it("keeps streamed and dynamic updates from re-enabling cancelled live-follow", async () => {
-    const {
-      isTimelineLiveFollowActive,
-      keyboardEventMayNavigateTimelineAwayFromEnd,
-      shouldAutoScrollTimeline,
-    } = await import("./MessagesTimeline.logic");
-
-    expect(keyboardEventMayNavigateTimelineAwayFromEnd({ key: "PageUp", shiftKey: false })).toBe(
-      true,
-    );
-    expect(keyboardEventMayNavigateTimelineAwayFromEnd({ key: " ", shiftKey: true })).toBe(true);
-    expect(keyboardEventMayNavigateTimelineAwayFromEnd({ key: "PageDown", shiftKey: false })).toBe(
-      false,
-    );
-
-    for (const update of [
-      "streamed message",
-      "tool output",
-      "status change",
-      "item height change",
-    ] as const) {
-      const liveFollowActive = isTimelineLiveFollowActive(null, 1);
-      expect(liveFollowActive, update).toBe(false);
-      expect(shouldAutoScrollTimeline(true, liveFollowActive), update).toBe(false);
-    }
-  });
-
-  it("supports disabling automatic scrolling as the safe fallback", async () => {
-    const {
-      isTimelineAutoScrollEnabled,
-      shouldAutoScrollTimeline,
-      shouldCancelTimelineLiveFollow,
-      shouldPositionTimelineAnchor,
-    } = await import("./MessagesTimeline.logic");
-
-    expect(isTimelineAutoScrollEnabled("strict")).toBe(true);
-    expect(isTimelineAutoScrollEnabled("disabled")).toBe(false);
-    expect(shouldAutoScrollTimeline(true, true, "disabled")).toBe(false);
-    expect(shouldCancelTimelineLiveFollow(true, "disabled")).toBe(true);
-    expect(shouldPositionTimelineAnchor("message-1", "message-1", true, true, "disabled")).toBe(
-      false,
-    );
-  });
-
-  it("does not activate a jump follow-lock until exact-bottom confirmation", async () => {
-    const { shouldAutoScrollTimeline } = await import("./MessagesTimeline.logic");
-
-    const beforeAnimatedJumpCompletes = shouldAutoScrollTimeline(false, true);
-    const afterExactBottomConfirmation = shouldAutoScrollTimeline(true, true);
-
-    expect(beforeAnimatedJumpCompletes).toBe(false);
-    expect(afterExactBottomConfirmation).toBe(true);
-  });
-
   it("anchors a sent attachment message using its measured height", () => {
     const onAnchorReady = vi.fn();
-    const onAnchorSizeChanged = vi.fn();
     const firstEntry = buildUserTimelineEntry("First prompt.");
     const secondEntry = {
       ...buildUserTimelineEntry("Newest prompt."),
@@ -466,7 +414,6 @@ describe("MessagesTimeline", () => {
         {...buildProps()}
         anchorMessageId={secondEntry.message.id}
         onAnchorReady={onAnchorReady}
-        onAnchorSizeChanged={onAnchorSizeChanged}
         contentInsetEndAdjustment={144}
         timelineEntries={[firstEntry, secondEntry]}
       />,
@@ -481,10 +428,10 @@ describe("MessagesTimeline", () => {
     expect(markup).not.toContain('data-maintain-scroll-at-end="enabled"');
     expect(markup).toContain('data-maintain-visible-content-position="object"');
     expect(markup).toContain('data-maintain-visible-content-position-data="true"');
-    expect(markup).toContain('data-maintain-visible-content-position-size="false"');
+    expect(markup).toContain('data-maintain-visible-content-position-size="true"');
+    expect(markup).toContain('data-maintain-visible-content-position-restore="true"');
     expect(onAnchorReady).toHaveBeenCalledOnce();
     expect(onAnchorReady).toHaveBeenCalledWith(secondEntry.message.id, 1);
-    expect(onAnchorSizeChanged).toHaveBeenCalledWith(secondEntry.message.id, 240);
   });
 
   it("renders collapse controls for long user messages", () => {
@@ -501,7 +448,7 @@ describe("MessagesTimeline", () => {
     expect(markup).toContain('data-user-message-footer="true"');
   });
 
-  it("maintains the end across data, item-height, and layout changes only at threshold zero", () => {
+  it("maintains the end across data, item-height, and layout changes while live-follow is active", () => {
     const markup = renderToStaticMarkup(
       <MessagesTimeline
         {...buildProps()}
@@ -514,7 +461,6 @@ describe("MessagesTimeline", () => {
     expect(markup).toContain('data-maintain-scroll-at-end-data-change="true"');
     expect(markup).toContain('data-maintain-scroll-at-end-item-layout="true"');
     expect(markup).toContain('data-maintain-scroll-at-end-layout="true"');
-    expect(markup).toContain('data-maintain-scroll-at-end-threshold="0"');
   });
 
   it("does not render collapse controls for short user messages", () => {
@@ -527,7 +473,7 @@ describe("MessagesTimeline", () => {
 
     expect(markup).not.toContain("Show full message");
     expect(markup).toContain('data-user-message-collapsible="false"');
-    expect(markup).toContain("rounded-2xl bg-accent p-3");
+    expect(markup).toContain("rounded-2xl bg-message p-3");
   });
 
   it("renders inline terminal labels with the composer chip UI", () => {
