@@ -63,23 +63,16 @@ export function sortWindows(windows: readonly AccountLimitsWindow[]): AccountLim
 // ---------------------------------------------------------------------------
 
 /**
- * Windows we receive but deliberately do not surface: the oauth-apps bucket
- * and the opus/sonnet scoped weeklies are noise next to the three windows
- * users actually plan around (5h, weekly, Fable). `extra_usage` and `overage`
- * are credit meters, not windows.
+ * Credit/non-model buckets we receive but do not surface. Model-scoped
+ * weeklies remain visible and are matched against the active model by the UI.
  */
-const CLAUDE_HIDDEN_WINDOW_KEYS = new Set([
-  "seven_day_oauth_apps",
-  "seven_day_opus",
-  "seven_day_sonnet",
-  "extra_usage",
-  "overage",
-]);
+const CLAUDE_HIDDEN_WINDOW_KEYS = new Set(["seven_day_oauth_apps", "extra_usage", "overage"]);
 
 interface ClaudeWindowMeta {
   readonly id: string;
   readonly label: string;
   readonly minutes: number | null;
+  readonly model: string | null;
 }
 
 /**
@@ -92,10 +85,12 @@ interface ClaudeWindowMeta {
  */
 function claudeWindowMeta(key: string): ClaudeWindowMeta | null {
   if (CLAUDE_HIDDEN_WINDOW_KEYS.has(key)) return null;
-  if (key === "five_hour") return { id: "five_hour", label: "5h", minutes: FIVE_HOUR_MINUTES };
-  if (key === "seven_day") return { id: "seven_day", label: "Week", minutes: SEVEN_DAY_MINUTES };
+  if (key === "five_hour")
+    return { id: "five_hour", label: "5h", minutes: FIVE_HOUR_MINUTES, model: null };
+  if (key === "seven_day")
+    return { id: "seven_day", label: "Week", minutes: SEVEN_DAY_MINUTES, model: null };
   if (key === "iguana_necktie" || key.toLowerCase().includes("fable")) {
-    return { id: "fable", label: "Fable", minutes: SEVEN_DAY_MINUTES };
+    return { id: "fable", label: "Fable", minutes: SEVEN_DAY_MINUTES, model: "Fable" };
   }
   const stripped = key.startsWith("seven_day_") ? key.slice("seven_day_".length) : key;
   const label = stripped.replace(/_/g, " ").replace(/^./, (c) => c.toUpperCase());
@@ -103,6 +98,7 @@ function claudeWindowMeta(key: string): ClaudeWindowMeta | null {
     id: key,
     label,
     minutes: key.startsWith("seven_day") ? SEVEN_DAY_MINUTES : null,
+    model: key.startsWith("seven_day_") ? stripped : null,
   };
 }
 
@@ -117,6 +113,7 @@ function claudeWindowFromEntry(meta: ClaudeWindowMeta, entry: unknown): AccountL
     usedPercent: utilization === null ? 0 : clampPercent(utilization),
     resetsAt: readString(entry.resets_at),
     windowMinutes: meta.minutes,
+    model: meta.model,
   };
 }
 
@@ -171,6 +168,7 @@ function claudeWindowFromLimitEntry(entry: unknown): AccountLimitsWindow | null 
       usedPercent: percent === null ? 0 : clampPercent(percent),
       resetsAt,
       windowMinutes: FIVE_HOUR_MINUTES,
+      model: null,
     };
   }
   if (kind === "weekly_all") {
@@ -180,6 +178,7 @@ function claudeWindowFromLimitEntry(entry: unknown): AccountLimitsWindow | null 
       usedPercent: percent === null ? 0 : clampPercent(percent),
       resetsAt,
       windowMinutes: SEVEN_DAY_MINUTES,
+      model: null,
     };
   }
   if (kind === "weekly_scoped") {
@@ -187,9 +186,6 @@ function claudeWindowFromLimitEntry(entry: unknown): AccountLimitsWindow | null 
     const model = scope && isRecord(scope.model) ? scope.model : null;
     const name = (model && (readString(model.display_name) ?? readString(model.id))) ?? null;
     if (name === null) return null;
-    // Same visibility call as the flat keys: Fable is its own limit worth
-    // showing, the opus/sonnet scoped weeklies are hidden.
-    if (/opus|sonnet/i.test(name)) return null;
     const isFable = /fable/i.test(name);
     return {
       id: isFable ? "fable" : `scoped_${name.toLowerCase().replace(/[^a-z0-9]+/g, "_")}`,
@@ -197,6 +193,7 @@ function claudeWindowFromLimitEntry(entry: unknown): AccountLimitsWindow | null 
       usedPercent: percent === null ? 0 : clampPercent(percent),
       resetsAt,
       windowMinutes: SEVEN_DAY_MINUTES,
+      model: name,
     };
   }
   return null;
@@ -223,6 +220,7 @@ export function claudeWindowFromRateLimitEvent(value: unknown): AccountLimitsWin
     usedPercent: utilization === null ? 0 : clampPercent(utilization),
     resetsAt: resetsAt === null ? null : isoFromUnixSeconds(resetsAt),
     windowMinutes: meta.minutes,
+    model: meta.model,
   };
 }
 
@@ -232,6 +230,7 @@ export function claudeWindowFromRateLimitEvent(value: unknown): AccountLimitsWin
 
 export interface CodexRateLimitsSnapshot {
   readonly limitId: string | null;
+  readonly limitName: string | null;
   readonly plan: string | null;
   readonly windows: AccountLimitsWindow[];
 }
@@ -252,6 +251,7 @@ export function codexSnapshotFromUnknown(value: unknown): CodexRateLimitsSnapsho
   if (!isRecord(value)) return null;
   const snapshot = isRecord(value.rateLimits) ? value.rateLimits : value;
   const limitId = readString(snapshot.limitId ?? snapshot.limit_id);
+  const limitName = readString(snapshot.limitName ?? snapshot.limit_name);
   const plan = readString(snapshot.planType ?? snapshot.plan_type);
 
   const windows: AccountLimitsWindow[] = [];
@@ -263,7 +263,7 @@ export function codexSnapshotFromUnknown(value: unknown): CodexRateLimitsSnapsho
   }
   if (windows.length === 0 && limitId === null && plan === null) return null;
 
-  return { limitId, plan, windows: sortWindows(windows) };
+  return { limitId, limitName, plan, windows: sortWindows(windows) };
 }
 
 /**
@@ -291,6 +291,7 @@ function codexWindowFromSlot(
       usedPercent: clampPercent(usedPercent),
       resetsAt,
       windowMinutes: FIVE_HOUR_MINUTES,
+      model: null,
     };
   }
   if (effectiveMinutes === SEVEN_DAY_MINUTES) {
@@ -300,6 +301,7 @@ function codexWindowFromSlot(
       usedPercent: clampPercent(usedPercent),
       resetsAt,
       windowMinutes: SEVEN_DAY_MINUTES,
+      model: null,
     };
   }
   return {
@@ -311,5 +313,6 @@ function codexWindowFromSlot(
     usedPercent: clampPercent(usedPercent),
     resetsAt,
     windowMinutes: effectiveMinutes,
+    model: null,
   };
 }

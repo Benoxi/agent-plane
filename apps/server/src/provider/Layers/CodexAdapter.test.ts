@@ -521,6 +521,7 @@ lifecycleLayer("CodexAdapterLive lifecycle", (it) => {
         id: asEventId("evt-msg-complete"),
         kind: "notification",
         provider: ProviderDriverKind.make("codex"),
+        providerInstanceId: ProviderInstanceId.make("codex_work"),
         createdAt: "2026-01-01T00:00:00.000Z",
         method: "item/completed",
         threadId: asThreadId("thread-1"),
@@ -551,6 +552,7 @@ lifecycleLayer("CodexAdapterLive lifecycle", (it) => {
       }
       NodeAssert.equal(firstEvent.value.itemId, "msg_1");
       NodeAssert.equal(firstEvent.value.turnId, "turn-1");
+      NodeAssert.equal(firstEvent.value.providerInstanceId, "codex_work");
       NodeAssert.equal(firstEvent.value.payload.itemType, "assistant_message");
     }),
   );

@@ -1482,6 +1482,7 @@ const make = Effect.gen(function* () {
       if (event.type === "account.rate-limits.updated") {
         yield* accountLimits.ingest({
           provider: event.provider,
+          providerInstanceId: event.providerInstanceId,
           payload: event.payload.rateLimits,
           createdAt: event.createdAt,
         });

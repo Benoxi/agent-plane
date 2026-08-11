@@ -9,7 +9,7 @@ import {
 } from "./accountLimitsNormalize.ts";
 
 describe("claudeUsageSnapshotFromUnknown", () => {
-  it("keeps 5h, weekly and Fable; hides oauth-apps and model weeklies", () => {
+  it("keeps account and model windows while hiding non-model buckets", () => {
     const snapshot = claudeUsageSnapshotFromUnknown({
       subscription_type: "max",
       rate_limits: {
@@ -26,9 +26,14 @@ describe("claudeUsageSnapshotFromUnknown", () => {
     expect(snapshot?.windows.map((window) => window.id)).toEqual([
       "five_hour",
       "seven_day",
+      "seven_day_opus",
+      "seven_day_sonnet",
       "fable",
     ]);
-    expect(snapshot?.windows[2]).toMatchObject({ label: "Fable", usedPercent: 30 });
+    expect(snapshot?.windows).toContainEqual(
+      expect.objectContaining({ id: "seven_day_opus", model: "opus", usedPercent: 78 }),
+    );
+    expect(snapshot?.windows[4]).toMatchObject({ label: "Fable", model: "Fable", usedPercent: 30 });
   });
 
   it("reads the newer limits array, including a Fable-scoped weekly", () => {
@@ -59,6 +64,7 @@ describe("claudeUsageSnapshotFromUnknown", () => {
       ["five_hour", 10],
       ["seven_day", 20],
       ["fable", 55],
+      ["scoped_opus", 90],
     ]);
   });
 
@@ -68,7 +74,14 @@ describe("claudeUsageSnapshotFromUnknown", () => {
       rate_limits: { five_hour: { utilization: null, resets_at: null } },
     });
     expect(snapshot?.windows).toEqual([
-      { id: "five_hour", label: "5h", usedPercent: 0, resetsAt: null, windowMinutes: 300 },
+      {
+        id: "five_hour",
+        label: "5h",
+        usedPercent: 0,
+        resetsAt: null,
+        windowMinutes: 300,
+        model: null,
+      },
     ]);
   });
 
@@ -98,15 +111,16 @@ describe("claudeWindowFromRateLimitEvent", () => {
       usedPercent: 87.5,
       resetsAt: DateTime.formatIso(DateTime.makeUnsafe(1_786_600_800_000)),
       windowMinutes: 300,
+      model: null,
     });
   });
 
-  it("drops hidden window types", () => {
+  it("retains streamed model-scoped windows", () => {
     expect(
       claudeWindowFromRateLimitEvent({
         rate_limit_info: { rateLimitType: "seven_day_opus", utilization: 90 },
       }),
-    ).toBeNull();
+    ).toMatchObject({ id: "seven_day_opus", model: "opus", usedPercent: 90 });
   });
 });
 
@@ -130,6 +144,7 @@ describe("codexSnapshotFromUnknown", () => {
         usedPercent: 14,
         resetsAt: DateTime.formatIso(DateTime.makeUnsafe(1_786_677_720_000)),
         windowMinutes: 10080,
+        model: null,
       },
     ]);
   });
@@ -157,7 +172,7 @@ describe("codexSnapshotFromUnknown", () => {
     ]);
   });
 
-  it("flags side meters like Spark so they can be dropped", () => {
+  it("identifies side meters while retaining their payload", () => {
     const snapshot = codexSnapshotFromUnknown({
       limit_id: "codex_bengalfox",
       limit_name: "GPT-5.3-Codex-Spark",

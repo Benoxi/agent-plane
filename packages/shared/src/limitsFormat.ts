@@ -31,6 +31,17 @@ export function formatResetAt(resetsAt: string | null, nowMs: number): string | 
   return DATE_TIME.format(at).replace(", ", " ");
 }
 
+/** Full local reset time with an explicit timezone for detailed limit views. */
+export function formatResetDateTime(resetsAt: string | null): string | null {
+  if (resetsAt === null) return null;
+  const at = Date.parse(resetsAt);
+  if (Number.isNaN(at)) return null;
+  return new Intl.DateTimeFormat(undefined, {
+    dateStyle: "medium",
+    timeStyle: "long",
+  }).format(at);
+}
+
 /** Age of a snapshot: `just now`, `5m ago`, `6h ago`, `3d ago`. */
 export function formatAgo(asOf: string, nowMs: number): string {
   const at = Date.parse(asOf);

@@ -3072,6 +3072,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     const base = {
       eventId: stamp.eventId,
       provider: PROVIDER,
+      providerInstanceId: context.session.providerInstanceId,
       createdAt: stamp.createdAt,
       threadId: context.session.threadId,
       ...(context.turnState ? { turnId: asCanonicalTurnId(context.turnState.turnId) } : {}),
@@ -3470,12 +3471,13 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         return undefined;
       }
     });
-    if (!usage || usage.rate_limits === null || usage.rate_limits === undefined) return;
+    if (!usage || usage.rate_limits === undefined) return;
 
     const stamp = yield* makeEventStamp();
     yield* offerRuntimeEvent({
       eventId: stamp.eventId,
       provider: PROVIDER,
+      providerInstanceId: context.session.providerInstanceId,
       createdAt: stamp.createdAt,
       threadId: context.session.threadId,
       providerRefs: nativeProviderRefs(context),
@@ -3507,6 +3509,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     const base = {
       eventId: stamp.eventId,
       provider: PROVIDER,
+      providerInstanceId: context.session.providerInstanceId,
       createdAt: stamp.createdAt,
       threadId: context.session.threadId,
       ...(context.turnState ? { turnId: asCanonicalTurnId(context.turnState.turnId) } : {}),

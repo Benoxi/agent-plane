@@ -9,13 +9,18 @@
  * fallback: its limits exist only on the live stream, which is why snapshots
  * are persisted across restarts.
  *
- * One snapshot per provider: T3 Code drives one account per provider today.
+ * One snapshot per provider instance. The environment remains implicit in
+ * the RPC connection, so clients can select the exact environment + instance.
  *
  * @module AccountLimitsService
  */
 import {
   ACCOUNT_LIMITS_CONTRACT_VERSION,
   AccountLimitsSnapshot,
+  CodexSettings,
+  defaultInstanceIdForDriver,
+  ProviderDriverKind,
+  ProviderInstanceId,
   type AccountLimitsSummary,
   type UsageProviderKind,
 } from "@t3tools/contracts";
@@ -37,7 +42,6 @@ import {
   claudeUsageSnapshotFromUnknown,
   claudeWindowFromRateLimitEvent,
   codexSnapshotFromUnknown,
-  isPrimaryCodexLimit,
   sortWindows,
 } from "./accountLimitsNormalize.ts";
 import { readLatestCodexRateLimits } from "./accountLimitsTranscripts.ts";
@@ -53,10 +57,12 @@ const decodeLimitsCache = Schema.decodeUnknownEffect(
 const encodeLimitsCache = Schema.encodeEffect(
   Schema.fromJsonString(LimitsCacheFile as unknown as Schema.Codec<typeof LimitsCacheFile.Type>),
 );
+const decodeCodexSettings = Schema.decodeUnknownEffect(CodexSettings);
 
 export interface AccountLimitsIngestInput {
   /** Driver kind off the runtime event (`claudeAgent`, `codex`, ...). */
   readonly provider: string;
+  readonly providerInstanceId?: ProviderInstanceId | undefined;
   /** The event's `payload.rateLimits`, in whatever shape the adapter emitted. */
   readonly payload: unknown;
   readonly createdAt: string;
@@ -96,7 +102,7 @@ export const make = Effect.gen(function* () {
   const config = yield* ServerConfig;
   const settingsService = yield* ServerSettings.ServerSettingsService;
 
-  const snapshots = new Map<UsageProviderKind, AccountLimitsSnapshot>();
+  const snapshots = new Map<ProviderInstanceId, AccountLimitsSnapshot>();
   const cachePath = path.join(config.stateDir, "account-limits.json");
   let lastCodexSeedAttemptAtMs = 0;
 
@@ -111,7 +117,9 @@ export const make = Effect.gen(function* () {
       );
       if (stored === null) return;
       for (const snapshot of stored) {
-        if (!snapshots.has(snapshot.provider)) snapshots.set(snapshot.provider, snapshot);
+        if (!snapshots.has(snapshot.providerInstanceId)) {
+          snapshots.set(snapshot.providerInstanceId, snapshot);
+        }
       }
     }),
   );
@@ -143,23 +151,23 @@ export const make = Effect.gen(function* () {
   const store = Effect.fn("AccountLimitsService.store")(function* (
     snapshot: AccountLimitsSnapshot,
   ) {
-    snapshots.set(snapshot.provider, snapshot);
+    snapshots.set(snapshot.providerInstanceId, snapshot);
     yield* persist();
   });
 
   const ingestClaude = Effect.fn("AccountLimitsService.ingestClaude")(function* (
+    providerInstanceId: ProviderInstanceId,
     payload: unknown,
     createdAt: string,
   ) {
-    const previous = snapshots.get("claude");
+    const previous = snapshots.get(providerInstanceId);
     const full = claudeUsageSnapshotFromUnknown(payload);
     if (full !== null) {
-      // Rate limits do not apply to this account (API key / Bedrock / Vertex):
-      // nothing to show, and nothing worth clearing a previous snapshot over.
-      if (full.windows.length === 0) return;
       yield* store({
         provider: "claude",
-        plan: full.plan ?? previous?.plan ?? null,
+        providerInstanceId,
+        available: full.windows.length > 0,
+        plan: full.windows.length > 0 ? (full.plan ?? previous?.plan ?? null) : null,
         windows: full.windows,
         asOf: createdAt,
         source: "live",
@@ -176,6 +184,8 @@ export const make = Effect.gen(function* () {
     ]);
     yield* store({
       provider: "claude",
+      providerInstanceId,
+      available: true,
       plan: previous?.plan ?? null,
       windows,
       asOf: createdAt,
@@ -184,19 +194,33 @@ export const make = Effect.gen(function* () {
   });
 
   const ingestCodex = Effect.fn("AccountLimitsService.ingestCodex")(function* (
+    providerInstanceId: ProviderInstanceId,
     payload: unknown,
     createdAt: string,
   ) {
     const snapshot = codexSnapshotFromUnknown(payload);
     if (snapshot === null) return;
-    // Per-model side meters (Spark) are not surfaced.
-    if (!isPrimaryCodexLimit(snapshot.limitId)) return;
     if (snapshot.windows.length === 0) return;
-    const previous = snapshots.get("codex");
+    const previous = snapshots.get(providerInstanceId);
+    const isPrimary = snapshot.limitId === null || snapshot.limitId === "codex";
+    const scopedPrefix = `${snapshot.limitId ?? "codex"}:`;
+    const incomingWindows = isPrimary
+      ? snapshot.windows
+      : snapshot.windows.map((window) => ({
+          ...window,
+          id: `${scopedPrefix}${window.id}`,
+          label: `${snapshot.limitId} ${window.label}`,
+          model: snapshot.limitName ?? snapshot.limitId,
+        }));
+    const retainedWindows = isPrimary
+      ? (previous?.windows ?? []).filter((window) => window.model !== null)
+      : (previous?.windows ?? []).filter((window) => !window.id.startsWith(scopedPrefix));
     yield* store({
       provider: "codex",
+      providerInstanceId,
+      available: true,
       plan: snapshot.plan ?? previous?.plan ?? null,
-      windows: snapshot.windows,
+      windows: sortWindows([...retainedWindows, ...incomingWindows]),
       asOf: createdAt,
       source: "live",
     });
@@ -207,17 +231,20 @@ export const make = Effect.gen(function* () {
   ) {
     const provider = providerFromDriver(input.provider);
     if (provider === null) return;
+    const providerInstanceId =
+      input.providerInstanceId ??
+      defaultInstanceIdForDriver(ProviderDriverKind.make(input.provider));
     yield* ensureLoaded;
     yield* stateLock.withPermits(1)(
       Effect.gen(function* () {
         // Guard against out-of-order delivery: an event older than what is
         // already stored must not roll the snapshot backwards.
-        const existing = snapshots.get(provider);
+        const existing = snapshots.get(providerInstanceId);
         if (existing !== undefined && input.createdAt < existing.asOf) return;
         if (provider === "claude") {
-          yield* ingestClaude(input.payload, input.createdAt);
+          yield* ingestClaude(providerInstanceId, input.payload, input.createdAt);
         } else {
-          yield* ingestCodex(input.payload, input.createdAt);
+          yield* ingestCodex(providerInstanceId, input.payload, input.createdAt);
         }
       }),
     );
@@ -238,30 +265,47 @@ export const make = Effect.gen(function* () {
       Effect.catchCause(() => Effect.succeed(null)),
     );
     if (settings === null) return;
-    const layout = yield* resolveCodexHomeLayout(settings.providers.codex).pipe(
-      Effect.provideService(Path.Path, path),
-    );
-    const sessionsDir = path.join(layout.sharedHomePath, "sessions");
-    const found = yield* Effect.promise(() => readLatestCodexRateLimits(sessionsDir, nowMs));
-    if (found === null) return;
+    const codexDriver = ProviderDriverKind.make("codex");
+    const configs = new Map<ProviderInstanceId, CodexSettings>();
+    configs.set(defaultInstanceIdForDriver(codexDriver), settings.providers.codex);
+    for (const [rawInstanceId, instance] of Object.entries(settings.providerInstances)) {
+      if (instance.driver !== codexDriver) continue;
+      const decoded = yield* decodeCodexSettings(instance.config).pipe(
+        Effect.catchCause(() => Effect.succeed(null)),
+      );
+      if (decoded !== null) configs.set(ProviderInstanceId.make(rawInstanceId), decoded);
+    }
 
-    const asOf = DateTime.formatIso(DateTime.makeUnsafe(found.asOfMs));
-    // The slow transcript read happened outside the lock; only the
-    // guard-and-store is serialized against live ingests.
-    yield* stateLock.withPermits(1)(
-      Effect.gen(function* () {
-        const existing = snapshots.get("codex");
-        // ISO-8601 strings order lexicographically.
-        if (existing !== undefined && existing.asOf >= asOf) return;
-        yield* store({
-          provider: "codex",
-          plan: found.snapshot.plan ?? existing?.plan ?? null,
-          windows: found.snapshot.windows,
-          asOf,
-          source: "transcript",
-        });
-      }),
-    );
+    for (const [providerInstanceId, codexSettings] of configs) {
+      const layout = yield* resolveCodexHomeLayout(codexSettings).pipe(
+        Effect.provideService(Path.Path, path),
+      );
+      const sessionsDir = path.join(layout.sharedHomePath, "sessions");
+      const found = yield* Effect.promise(() => readLatestCodexRateLimits(sessionsDir, nowMs));
+      if (found === null) continue;
+
+      const asOf = DateTime.formatIso(DateTime.makeUnsafe(found.asOfMs));
+      // The slow transcript read happened outside the lock; only the
+      // guard-and-store is serialized against live ingests.
+      yield* stateLock.withPermits(1)(
+        Effect.gen(function* () {
+          const existing = snapshots.get(providerInstanceId);
+          if (existing !== undefined && existing.asOf >= asOf) return;
+          yield* store({
+            provider: "codex",
+            providerInstanceId,
+            available: true,
+            plan: found.snapshot.plan ?? existing?.plan ?? null,
+            windows: sortWindows([
+              ...(existing?.windows ?? []).filter((window) => window.model !== null),
+              ...found.snapshot.windows,
+            ]),
+            asOf,
+            source: "transcript",
+          });
+        }),
+      );
+    }
   });
 
   const readSummary = Effect.fn("AccountLimitsService.readSummary")(function* () {
@@ -271,7 +315,11 @@ export const make = Effect.gen(function* () {
     return {
       contractVersion: ACCOUNT_LIMITS_CONTRACT_VERSION,
       readAt: DateTime.formatIso(DateTime.makeUnsafe(nowMs)),
-      snapshots: [...snapshots.values()].sort((a, b) => a.provider.localeCompare(b.provider)),
+      snapshots: [...snapshots.values()].sort(
+        (a, b) =>
+          a.provider.localeCompare(b.provider) ||
+          a.providerInstanceId.localeCompare(b.providerInstanceId),
+      ),
     } satisfies AccountLimitsSummary;
   });
 

@@ -720,6 +720,9 @@ export function createServerEnvironmentAtoms<R, E>(
       label: "environment-data:server:account-limits",
       tag: WS_METHODS.serverGetAccountLimits,
       staleTimeMs: 60_000,
+      // Provider snapshots arrive asynchronously after session startup and
+      // runtime events do not currently have a dedicated client subscription.
+      refreshIntervalMs: 15_000,
     }),
     configProjection,
     welcome: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
