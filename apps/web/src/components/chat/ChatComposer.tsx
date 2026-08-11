@@ -1099,6 +1099,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const voiceTickerRef = useRef<number | null>(null);
   const voiceFinalTextRef = useRef("");
   const voiceErroredRef = useRef(false);
+  const voiceLocalNoticeShownRef = useRef(false);
   const stashPulseKeyRef = useRef(0);
   const stashPulseTimeoutRef = useRef<number | null>(null);
   /**
@@ -1863,6 +1864,15 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
             : "Voice dictation is not supported in this browser.",
       });
       return;
+    }
+    if (support.mode === "local" && !voiceLocalNoticeShownRef.current) {
+      voiceLocalNoticeShownRef.current = true;
+      toastManager.add({
+        type: "info",
+        title: "On-device dictation",
+        description:
+          "The first transcription downloads a small local speech model. It stays cached, and your audio does not leave this device.",
+      });
     }
 
     const startedAtMs = Date.now();

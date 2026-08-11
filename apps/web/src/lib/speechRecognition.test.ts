@@ -1,10 +1,14 @@
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
+const transcribeLocalSpeech = vi.hoisted(() => vi.fn());
+vi.mock("./localSpeechTranscription", () => ({ transcribeLocalSpeech }));
+
 import {
   collectSpeechRecognitionText,
   createComposerSpeechRecognition,
   createSpeechRecognitionTranscriptTracker,
   detectSpeechRecognitionSupport,
+  mixAndResampleAudio,
   speechRecognitionErrorMessage,
 } from "./speechRecognition";
 
@@ -25,14 +29,36 @@ function installWindow(input: {
   webkitSpeechRecognition?: (new () => SpeechRecognition) | undefined;
   secure?: boolean;
   hostname?: string;
+  desktop?: boolean;
 }) {
   vi.stubGlobal("window", {
     isSecureContext: input.secure ?? true,
     location: { hostname: input.hostname ?? "localhost" },
     SpeechRecognition: input.SpeechRecognition,
     webkitSpeechRecognition: input.webkitSpeechRecognition,
+    desktopBridge: input.desktop ? {} : undefined,
   });
-  vi.stubGlobal("navigator", { language: "en-US", userAgent: "Test" });
+  vi.stubGlobal("navigator", {
+    language: "en-US",
+    userAgent: "Test",
+    ...(input.desktop ? { mediaDevices: { getUserMedia: vi.fn() } } : {}),
+  });
+  if (input.desktop) {
+    vi.stubGlobal(
+      "MediaRecorder",
+      class {
+        readonly state = "inactive";
+      },
+    );
+    vi.stubGlobal(
+      "AudioContext",
+      class {
+        close() {
+          return Promise.resolve();
+        }
+      },
+    );
+  }
 }
 
 function makeResult(transcript: string, isFinal: boolean): SpeechRecognitionResult {
@@ -71,6 +97,7 @@ describe("speechRecognition", () => {
 
     expect(detectSpeechRecognitionSupport()).toEqual({
       supported: true,
+      mode: "browser",
       ctor: FakeSpeechRecognition,
     });
   });
@@ -80,8 +107,21 @@ describe("speechRecognition", () => {
 
     expect(detectSpeechRecognitionSupport()).toEqual({
       supported: true,
+      mode: "browser",
       ctor: FakeSpeechRecognition,
     });
+  });
+
+  it("uses local recognition in Electron when Chromium omits the browser API", () => {
+    installWindow({ desktop: true });
+
+    expect(detectSpeechRecognitionSupport()).toEqual({ supported: true, mode: "local" });
+  });
+
+  it("prefers reliable local recognition over Electron's browser constructor", () => {
+    installWindow({ desktop: true, webkitSpeechRecognition: FakeSpeechRecognition });
+
+    expect(detectSpeechRecognitionSupport()).toEqual({ supported: true, mode: "local" });
   });
 
   it("returns unsupported when no constructor exists", () => {
@@ -111,6 +151,18 @@ describe("speechRecognition", () => {
     expect(speechRecognitionErrorMessage("no-speech")).toBe("No speech detected.");
     expect(speechRecognitionErrorMessage("network")).toBe("Speech recognition network error.");
     expect(speechRecognitionErrorMessage("bad-grammar")).toBe("Voice dictation failed.");
+  });
+
+  it("mixes channels and resamples captured audio to 16 kHz", () => {
+    const channels = [new Float32Array([0, 1, 0, -1]), new Float32Array([0, 0, 0, 0])];
+    const output = mixAndResampleAudio({
+      length: 4,
+      numberOfChannels: 2,
+      sampleRate: 32_000,
+      getChannelData: (index: number) => channels[index]!,
+    } as AudioBuffer);
+
+    expect([...output]).toEqual([0, 0]);
   });
 
   it("collects final and interim transcript chunks", () => {
@@ -194,6 +246,75 @@ describe("speechRecognition", () => {
     expect(instance!.interimResults).toBe(true);
     expect(instance!.lang).toBe("sl-SI");
     expect(instance!.start).toHaveBeenCalledOnce();
+  });
+
+  it("captures and locally transcribes audio when Electron has no browser recognizer", async () => {
+    installWindow({ desktop: true });
+    const stopTrack = vi.fn();
+    const stream = { getTracks: () => [{ stop: stopTrack }] } as unknown as MediaStream;
+    vi.mocked(navigator.mediaDevices.getUserMedia).mockResolvedValue(stream);
+    const instances: FakeMediaRecorder[] = [];
+    class FakeMediaRecorder extends EventTarget {
+      state: RecordingState = "inactive";
+      readonly mimeType = "audio/webm";
+
+      constructor(readonly stream: MediaStream) {
+        super();
+        instances.push(this);
+      }
+
+      start() {
+        this.state = "recording";
+      }
+
+      stop() {
+        this.state = "inactive";
+        this.dispatchEvent(
+          Object.assign(new Event("dataavailable"), { data: new Blob([new Uint8Array([1])]) }),
+        );
+        this.dispatchEvent(new Event("stop"));
+      }
+    }
+    const close = vi.fn().mockResolvedValue(undefined);
+    vi.stubGlobal("MediaRecorder", FakeMediaRecorder);
+    vi.stubGlobal(
+      "AudioContext",
+      class {
+        decodeAudioData = vi.fn().mockResolvedValue({
+          length: 2,
+          numberOfChannels: 1,
+          sampleRate: 16_000,
+          getChannelData: () => new Float32Array([0.25, -0.25]),
+        });
+        close = close;
+      },
+    );
+    transcribeLocalSpeech.mockResolvedValue("local transcript");
+    const onFinalText = vi.fn();
+    const onEnd = vi.fn();
+    const onError = vi.fn();
+    const recognizer = createComposerSpeechRecognition({
+      language: "en-US",
+      onFinalText,
+      onInterimText: vi.fn(),
+      onError,
+      onEnd,
+    });
+
+    recognizer.start();
+    await vi.waitFor(() => expect(instances).toHaveLength(1));
+    recognizer.stop();
+
+    await vi.waitFor(() => expect(onEnd).toHaveBeenCalledOnce());
+    expect(transcribeLocalSpeech).toHaveBeenCalledWith(
+      new Float32Array([0.25, -0.25]),
+      "en-US",
+      expect.any(AbortSignal),
+    );
+    expect(onFinalText).toHaveBeenCalledWith("local transcript");
+    expect(onError).not.toHaveBeenCalled();
+    expect(stopTrack).toHaveBeenCalled();
+    expect(close).toHaveBeenCalled();
   });
 
   it("forwards interim and final text, errors, and completion events", () => {

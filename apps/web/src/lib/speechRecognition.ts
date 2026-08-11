@@ -1,3 +1,5 @@
+import { transcribeLocalSpeech } from "./localSpeechTranscription";
+
 export type ComposerSpeechRecognitionConstructor = new () => SpeechRecognition;
 
 export interface ComposerSpeechRecognition {
@@ -8,7 +10,8 @@ export interface ComposerSpeechRecognition {
 }
 
 export type SpeechRecognitionSupport =
-  | { supported: true; ctor: ComposerSpeechRecognitionConstructor }
+  | { supported: true; mode: "browser"; ctor: ComposerSpeechRecognitionConstructor }
+  | { supported: true; mode: "local" }
   | { supported: false; reason: "missing-api" | "insecure-context" };
 
 declare global {
@@ -35,8 +38,18 @@ function isLocalhost(hostname: string): boolean {
 }
 
 function isElectronRenderer(): boolean {
+  if (typeof window !== "undefined" && window.desktopBridge !== undefined) return true;
   const userAgent = globalThis.navigator?.userAgent ?? "";
   return userAgent.includes("Electron");
+}
+
+function supportsLocalElectronRecognition(): boolean {
+  return (
+    isElectronRenderer() &&
+    typeof globalThis.navigator?.mediaDevices?.getUserMedia === "function" &&
+    typeof globalThis.MediaRecorder === "function" &&
+    typeof globalThis.AudioContext === "function"
+  );
 }
 
 export function detectSpeechRecognitionSupport(): SpeechRecognitionSupport {
@@ -47,10 +60,9 @@ export function detectSpeechRecognitionSupport(): SpeechRecognitionSupport {
     return { supported: false, reason: "insecure-context" };
   }
   const ctor = window.SpeechRecognition ?? window.webkitSpeechRecognition;
-  if (!ctor) {
-    return { supported: false, reason: "missing-api" };
-  }
-  return { supported: true, ctor };
+  if (supportsLocalElectronRecognition()) return { supported: true, mode: "local" };
+  if (ctor) return { supported: true, mode: "browser", ctor };
+  return { supported: false, reason: "missing-api" };
 }
 
 export function speechRecognitionErrorMessage(error: SpeechRecognitionErrorCode | string): string {
@@ -132,6 +144,126 @@ export function createSpeechRecognitionTranscriptTracker(): {
   };
 }
 
+export function mixAndResampleAudio(buffer: AudioBuffer, targetSampleRate = 16_000): Float32Array {
+  const sourceSampleRate = buffer.sampleRate;
+  const outputLength = Math.floor((buffer.length * targetSampleRate) / sourceSampleRate);
+  if (outputLength <= 0 || buffer.numberOfChannels <= 0) return new Float32Array();
+
+  const channels = Array.from({ length: buffer.numberOfChannels }, (_, index) =>
+    buffer.getChannelData(index),
+  );
+  const output = new Float32Array(outputLength);
+  const sourceStep = sourceSampleRate / targetSampleRate;
+  for (let outputIndex = 0; outputIndex < outputLength; outputIndex += 1) {
+    const sourcePosition = outputIndex * sourceStep;
+    const lowerIndex = Math.floor(sourcePosition);
+    const upperIndex = Math.min(lowerIndex + 1, buffer.length - 1);
+    const fraction = sourcePosition - lowerIndex;
+    let mixedSample = 0;
+    for (const channel of channels) {
+      const lower = channel[lowerIndex] ?? 0;
+      const upper = channel[upperIndex] ?? lower;
+      mixedSample += lower + (upper - lower) * fraction;
+    }
+    output[outputIndex] = mixedSample / channels.length;
+  }
+  return output;
+}
+
+function localRecognitionErrorMessage(cause: unknown): string {
+  if (cause instanceof DOMException && cause.name === "NotAllowedError") {
+    return "Microphone permission denied. Allow microphone access in system settings and try again.";
+  }
+  if (cause instanceof Error && cause.message) return cause.message;
+  return "Local voice transcription failed.";
+}
+
+function createLocalComposerSpeechRecognition(input: {
+  language: string;
+  onFinalText: (text: string) => void;
+  onInterimText: (text: string) => void;
+  onError: (message: string) => void;
+  onEnd: () => void;
+}): ComposerSpeechRecognition {
+  const abortController = new AbortController();
+  const chunks: Blob[] = [];
+  let recorder: MediaRecorder | undefined;
+  let stream: MediaStream | undefined;
+  let disposed = false;
+  let stopRequested = false;
+
+  const stopTracks = () => {
+    for (const track of stream?.getTracks() ?? []) track.stop();
+    stream = undefined;
+  };
+  const fail = (cause: unknown) => {
+    stopTracks();
+    if (disposed) return;
+    input.onError(localRecognitionErrorMessage(cause));
+  };
+  const finish = async () => {
+    stopTracks();
+    if (disposed) return;
+    let audioContext: AudioContext | undefined;
+    try {
+      if (chunks.length === 0) throw new Error("No speech detected.");
+      audioContext = new AudioContext();
+      const mimeType = recorder?.mimeType;
+      const encodedAudio = await new Blob(
+        chunks,
+        mimeType ? { type: mimeType } : undefined,
+      ).arrayBuffer();
+      const decodedAudio = await audioContext.decodeAudioData(encodedAudio);
+      const samples = mixAndResampleAudio(decodedAudio);
+      if (samples.length === 0) throw new Error("No speech detected.");
+      const text = await transcribeLocalSpeech(samples, input.language, abortController.signal);
+      if (disposed) return;
+      if (!text.trim()) throw new Error("No speech detected.");
+      input.onFinalText(text);
+      if (!disposed) input.onInterimText("");
+      if (!disposed) input.onEnd();
+    } catch (cause) {
+      fail(cause);
+    } finally {
+      await audioContext?.close().catch(() => undefined);
+    }
+  };
+
+  const start = async () => {
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      if (disposed) {
+        stopTracks();
+        return;
+      }
+      recorder = new MediaRecorder(stream);
+      recorder.addEventListener("dataavailable", (event) => {
+        if (!disposed && event.data.size > 0) chunks.push(event.data);
+      });
+      recorder.addEventListener("error", (event) => fail(event.error), { once: true });
+      recorder.addEventListener("stop", () => void finish(), { once: true });
+      recorder.start();
+      if (stopRequested && recorder.state !== "inactive") recorder.stop();
+    } catch (cause) {
+      fail(cause);
+    }
+  };
+
+  const stop = () => {
+    stopRequested = true;
+    if (recorder && recorder.state !== "inactive") recorder.stop();
+  };
+  const dispose = (options?: { abort?: boolean }) => {
+    if (disposed) return;
+    disposed = true;
+    abortController.abort();
+    if (options?.abort !== false && recorder && recorder.state !== "inactive") recorder.stop();
+    stopTracks();
+  };
+
+  return { start: () => void start(), stop, abort: dispose, dispose };
+}
+
 export function createComposerSpeechRecognition(input: {
   language: string;
   onFinalText: (text: string) => void;
@@ -147,6 +279,8 @@ export function createComposerSpeechRecognition(input: {
         : "Voice dictation is not supported in this browser.",
     );
   }
+
+  if (support.mode === "local") return createLocalComposerSpeechRecognition(input);
 
   const recognition = new support.ctor();
   recognition.continuous = true;
