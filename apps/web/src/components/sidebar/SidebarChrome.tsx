@@ -112,30 +112,22 @@ function T3Wordmark() {
 
 export const SidebarChromeFooter = memo(function SidebarChromeFooter() {
   const navigate = useNavigate();
-  const { isMobile, setOpenMobile } = useSidebar();
+  const { closeMobileSidebar } = useSidebar();
   const primaryEnvironment = usePrimaryEnvironment();
   const pullRequestsSupported =
     primaryEnvironment?.serverConfig?.environment.capabilities.pullRequests === true;
-  const closeMobileSidebar = useCallback(() => {
-    if (isMobile) {
-      setOpenMobile(false);
-    }
-  }, [isMobile, setOpenMobile]);
   const handlePullRequestsClick = useCallback(() => {
-    closeMobileSidebar();
-    void navigate({ to: "/pull-requests", search: { involvement: "all", state: "open" } });
+    closeMobileSidebar(
+      () => void navigate({ to: "/pull-requests", search: { involvement: "all", state: "open" } }),
+    );
   }, [closeMobileSidebar, navigate]);
   const handleSettingsClick = useCallback(() => {
-    closeMobileSidebar();
-    void navigate({ to: "/settings" });
+    closeMobileSidebar(() => void navigate({ to: "/settings" }));
   }, [closeMobileSidebar, navigate]);
 
   const handleUsageClick = useCallback(() => {
-    if (isMobile) {
-      setOpenMobile(false);
-    }
-    void navigate({ to: "/usage" });
-  }, [isMobile, navigate, setOpenMobile]);
+    closeMobileSidebar(() => void navigate({ to: "/usage" }));
+  }, [closeMobileSidebar, navigate]);
 
   return (
     <SidebarFooter className="p-[var(--sidebar-content-inset)]">

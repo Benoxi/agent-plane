@@ -1604,7 +1604,7 @@ export default function Sidebar() {
   const projectOrder = useUiStateStore((store) => store.projectOrder);
   const threads = useThreadShells();
   const router = useRouter();
-  const { isMobile, setOpenMobile } = useSidebar();
+  const { closeMobileSidebar, isMobile } = useSidebar();
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const autoSettleAfterDays = useClientSettings((s) => s.sidebarAutoSettleAfterDays);
   const confirmThreadDelete = useClientSettings((s) => s.confirmThreadDelete);
@@ -1916,15 +1916,18 @@ export default function Sidebar() {
       event.preventDefault();
       event.stopPropagation();
       setProjectScopeMenuOpen(false);
+      const navigateToProjectSettings = () =>
+        void router.navigate({
+          to: "/projects/$projectKey",
+          params: { projectKey: projectGroup.projectKey },
+        });
       if (isMobile) {
-        setOpenMobile(false);
+        closeMobileSidebar(navigateToProjectSettings);
+        return;
       }
-      void router.navigate({
-        to: "/projects/$projectKey",
-        params: { projectKey: projectGroup.projectKey },
-      });
+      navigateToProjectSettings();
     },
-    [isMobile, router, setOpenMobile],
+    [closeMobileSidebar, isMobile, router],
   );
 
   // Settled threads stay in the live shell stream (settled ≠ archived), so
@@ -2230,15 +2233,18 @@ export default function Sidebar() {
         clearSelection();
       }
       setSelectionAnchor(scopedThreadKey(threadRef));
+      const navigate = () =>
+        void router.navigate({
+          to: "/$environmentId/$threadId",
+          params: buildThreadRouteParams(threadRef),
+        });
       if (isMobile) {
-        setOpenMobile(false);
+        closeMobileSidebar(navigate);
+        return;
       }
-      void router.navigate({
-        to: "/$environmentId/$threadId",
-        params: buildThreadRouteParams(threadRef),
-      });
+      navigate();
     },
-    [clearSelection, isMobile, router, setOpenMobile, setSelectionAnchor],
+    [clearSelection, closeMobileSidebar, isMobile, router, setSelectionAnchor],
   );
 
   const navigateToDraft = useCallback(
@@ -2248,12 +2254,14 @@ export default function Sidebar() {
       // instead of ranging from a row that is no longer the context.
       // (clearSelection no-ops when there is nothing to clear.)
       clearSelection();
+      const navigate = () => void router.navigate({ to: "/draft/$draftId", params: { draftId } });
       if (isMobile) {
-        setOpenMobile(false);
+        closeMobileSidebar(navigate);
+        return;
       }
-      void router.navigate({ to: "/draft/$draftId", params: { draftId } });
+      navigate();
     },
-    [clearSelection, isMobile, router, setOpenMobile],
+    [clearSelection, closeMobileSidebar, isMobile, router],
   );
 
   const clearThreadSearch = useCallback(() => {
@@ -3223,18 +3231,27 @@ export default function Sidebar() {
   const handleNewThreadClick = useCallback(() => {
     // One project: nothing to pick, create immediately.
     if (projectGroups.length <= 1) {
-      if (isMobile) setOpenMobile(false);
-      void startNewThreadFromContext({
-        activeDraftThread: newThreadContext.activeDraftThread,
-        activeThread: newThreadContext.activeThread ?? undefined,
-        defaultProjectRef: newThreadContext.defaultProjectRef,
-        handleNewThread: newThreadContext.handleNewThread,
-      });
+      const startNewThread = () =>
+        void startNewThreadFromContext({
+          activeDraftThread: newThreadContext.activeDraftThread,
+          activeThread: newThreadContext.activeThread ?? undefined,
+          defaultProjectRef: newThreadContext.defaultProjectRef,
+          handleNewThread: newThreadContext.handleNewThread,
+        });
+      if (isMobile) {
+        closeMobileSidebar(startNewThread);
+        return;
+      }
+      startNewThread();
       return;
     }
-    if (isMobile) setOpenMobile(false);
-    openCommandPalette({ open: "new-thread-in" });
-  }, [isMobile, newThreadContext, projectGroups.length, setOpenMobile]);
+    const openNewThreadPicker = () => openCommandPalette({ open: "new-thread-in" });
+    if (isMobile) {
+      closeMobileSidebar(openNewThreadPicker);
+      return;
+    }
+    openNewThreadPicker();
+  }, [closeMobileSidebar, isMobile, newThreadContext, projectGroups.length]);
 
   // The button mirrors chat.new: in multi-project setups both route through
   // the command palette's "New thread in..." picker, and in single-project
