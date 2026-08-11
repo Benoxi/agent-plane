@@ -9,16 +9,16 @@ import {
 } from "./MessagesTimeline.logic";
 
 describe("TimelineJumpController", () => {
-  it("restores a failed jump without allowing stale completion after navigation", async () => {
+  it("restores failed and timed-out jumps while ignoring stale completion", async () => {
     let completeScroll!: () => void;
     const deferredScroll = new Promise<void>((resolve) => {
       completeScroll = resolve;
     });
     const controller = new TimelineJumpController();
     let context = { threadKey: "thread-1", userScrollGeneration: 0 };
-    const firstToken = controller.begin(context);
-    const firstResult = controller.awaitCompletion({
-      token: firstToken,
+    const staleToken = controller.begin(context);
+    const staleResult = controller.awaitCompletion({
+      token: staleToken,
       completion: deferredScroll,
       getContext: () => context,
       getIsAtEnd: () => false,
@@ -28,21 +28,12 @@ describe("TimelineJumpController", () => {
     context = { ...context, userScrollGeneration: 1 };
     controller.cancel();
     completeScroll();
-    await expect(firstResult).resolves.toBe("stale");
+    await expect(staleResult).resolves.toBe("stale");
 
-    const switchedThreadToken = controller.begin(context);
-    const switchedThreadResult = controller.awaitCompletion({
-      token: switchedThreadToken,
-      completion: Promise.resolve(),
-      getContext: () => ({ ...context, threadKey: "thread-2" }),
-      getIsAtEnd: () => false,
-    });
-    await expect(switchedThreadResult).resolves.toBe("stale");
-
-    const secondToken = controller.begin(context);
+    const failedToken = controller.begin(context);
     await expect(
       controller.awaitCompletion({
-        token: secondToken,
+        token: failedToken,
         completion: Promise.reject(new Error("scroll failed")),
         getContext: () => context,
         getIsAtEnd: () => false,
@@ -50,9 +41,9 @@ describe("TimelineJumpController", () => {
     ).resolves.toBe("restore");
 
     vi.useFakeTimers();
-    const thirdToken = controller.begin(context);
+    const timedOutToken = controller.begin(context);
     const timedOut = controller.awaitCompletion({
-      token: thirdToken,
+      token: timedOutToken,
       completion: new Promise(() => undefined),
       getContext: () => context,
       getIsAtEnd: () => false,

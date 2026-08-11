@@ -10,6 +10,7 @@ import {
   measureGhosttyCell,
   renderGhosttySnapshot,
   terminalGridSize,
+  type GhosttyCellRange,
   type GhosttyCellMetrics,
 } from "./renderer";
 import symbolsFontUrl from "./fonts/SymbolsNerdFontMono-Regular.woff2?url";
@@ -128,42 +129,6 @@ export async function loadTerminalFontFamily(
   return (environment?.resolve ?? terminalFontFamily)(family);
 }
 
-/**
- * Grids narrower than a classic 80-column terminal wrap command output hard,
- * so the rendered font size follows the canvas width: the preference is the
- * ceiling, and the size slides down (to a legibility floor) until a full-width
- * grid fits. A widening pane slides it back up toward the preference.
- */
-const MIN_TERMINAL_FIT_COLUMNS = 80;
-const MIN_TERMINAL_FIT_FONT_SIZE = 8;
-
-export function fittedTerminalFontSize(
-  cellWidthAt: (size: number) => number,
-  requested: number,
-  mountWidth: number,
-): number {
-  const available = mountWidth - CONTENT_PADDING * 2;
-  if (available <= 0) return requested;
-  const floor = Math.min(requested, MIN_TERMINAL_FIT_FONT_SIZE);
-  const fits = (cellWidth: number) =>
-    cellWidth > 0 && Math.floor(available / cellWidth) >= MIN_TERMINAL_FIT_COLUMNS;
-  let cellWidth = cellWidthAt(requested);
-  if (cellWidth <= 0 || fits(cellWidth)) return requested;
-  // The advance scales linearly with size for monospace faces: jump close to
-  // the fitting size, then settle the remaining rounding one step at a time.
-  const targetCellWidth = available / MIN_TERMINAL_FIT_COLUMNS;
-  let size = Math.max(
-    floor,
-    Math.min(requested, Math.floor((requested * targetCellWidth) / cellWidth)),
-  );
-  while (size > floor) {
-    cellWidth = cellWidthAt(size);
-    if (cellWidth <= 0 || fits(cellWidth)) break;
-    size -= 1;
-  }
-  return size;
-}
-
 export function terminalFontSize(size?: number): number {
   if (size === undefined || !Number.isFinite(size)) return DEFAULT_TERMINAL_FONT_SIZE;
   return Math.max(MIN_TERMINAL_FONT_SIZE, Math.min(MAX_TERMINAL_FONT_SIZE, Math.round(size)));
@@ -243,6 +208,28 @@ export function terminalScrollbarOffsetAtPointer(
   return Math.round((thumbTop / travel) * geometry.maxOffset);
 }
 
+export function terminalGridCellAt(options: {
+  bounds: { left: number; top: number };
+  clientX: number;
+  clientY: number;
+  cols: number;
+  rows: number;
+  metrics: Pick<GhosttyCellMetrics, "width" | "height">;
+  padding: number;
+  originY: number;
+}): { x: number; y: number } | null {
+  const { bounds, clientX, clientY, cols, rows, metrics, padding, originY } = options;
+  const gridX = clientX - bounds.left - padding;
+  const gridY = clientY - bounds.top - originY;
+  if (gridX < 0 || gridY < 0 || gridX >= cols * metrics.width || gridY >= rows * metrics.height) {
+    return null;
+  }
+  return {
+    x: Math.floor(gridX / metrics.width),
+    y: Math.floor(gridY / metrics.height),
+  };
+}
+
 function terminalRowText(row: GhosttySnapshot["rowData"][number], trimRight: boolean): string {
   const text = row.cells.map((cell) => cell.text || " ").join("");
   return trimRight ? text.trimEnd() : text;
@@ -261,6 +248,27 @@ export function terminalLinkAtPosition(
   rowIndex: number,
   column: number,
 ): string | null {
+  return terminalLinkAtPositionWithRange(rows, rowIndex, column)?.text ?? null;
+}
+
+export interface TerminalLinkWithRange {
+  readonly text: string;
+  readonly range: GhosttyCellRange;
+}
+
+function terminalColumnAtOffset(row: GhosttySnapshot["rowData"][number], offset: number): number {
+  for (let column = 0; column < row.cells.length; column += 1) {
+    const nextOffset = terminalColumnOffset(row, column + 1);
+    if (offset < nextOffset) return column;
+  }
+  return Math.max(0, row.cells.length - 1);
+}
+
+export function terminalLinkAtPositionWithRange(
+  rows: GhosttySnapshot["rowData"],
+  rowIndex: number,
+  column: number,
+): TerminalLinkWithRange | null {
   const wrappedLine = collectWrappedTerminalLinkLine(rowIndex + 1, (index) => {
     const row = rows[index];
     if (!row) return null;
@@ -289,7 +297,28 @@ export function terminalLinkAtPosition(
     if (offset >= match.start && offset < match.end) {
       // A truncated tail must not activate as a complete link.
       if (match.end === wrappedLine.text.length && continuesBelowViewport) return null;
-      return match.text;
+      const startSegment = wrappedLine.segments.find(
+        (value) => match.start >= value.startIndex && match.start < value.endIndex,
+      );
+      const endSegment = wrappedLine.segments.find(
+        (value) => match.end - 1 >= value.startIndex && match.end - 1 < value.endIndex,
+      );
+      const startRow = startSegment ? rows[startSegment.bufferLineNumber - 1] : undefined;
+      const endRow = endSegment ? rows[endSegment.bufferLineNumber - 1] : undefined;
+      if (!startSegment || !endSegment || !startRow || !endRow) return null;
+      return {
+        text: match.text,
+        range: {
+          start: {
+            x: terminalColumnAtOffset(startRow, match.start - startSegment.startIndex),
+            y: startSegment.bufferLineNumber - 1,
+          },
+          end: {
+            x: terminalColumnAtOffset(endRow, match.end - 1 - endSegment.startIndex),
+            y: endSegment.bufferLineNumber - 1,
+          },
+        },
+      };
     }
   }
   return null;
@@ -376,6 +405,13 @@ export function isTerminalLinkPointerGesture(
     : event.ctrlKey && !event.metaKey;
 }
 
+export function shouldShowTerminalLinkHover(
+  mouseTracking: boolean,
+  linkModifierActive: boolean,
+): boolean {
+  return !mouseTracking || linkModifierActive;
+}
+
 export function ghosttyMouseButton(button: number): number | null {
   switch (button) {
     case 0:
@@ -447,7 +483,6 @@ export class GhosttyTerminalSurface {
   private fontFamily: string;
   private requestedFontFamily: string | undefined;
   private fontSize: number;
-  private requestedFontSize: number;
   private fontEpoch = 0;
   private pendingFontEpoch: number | null = null;
   private readonly resizeObserver: ResizeObserver;
@@ -484,6 +519,9 @@ export class GhosttyTerminalSurface {
   private mouseReportingPointerId: number | null = null;
   private mouseReportingButton: number | null = null;
   private linkActivationPointerId: number | null = null;
+  private hoveredLink: TerminalLinkWithRange | null = null;
+  private hoverPointer: { x: number; y: number } | null = null;
+  private linkModifierActive = false;
   private selectionClickSequence: TerminalSelectionClickSequence | null = null;
   private selectionMoved = false;
   private composing = false;
@@ -526,7 +564,6 @@ export class GhosttyTerminalSurface {
     this.fontFamily = fontFamily;
     this.requestedFontFamily = options.font?.family;
     this.fontSize = terminalFontSize(options.font?.size);
-    this.requestedFontSize = this.fontSize;
     this.resizeObserver = new ResizeObserver(() => this.fit());
     this.installEvents();
     this.watchDevicePixelRatio();
@@ -567,6 +604,11 @@ export class GhosttyTerminalSurface {
 
     const context = canvas.getContext("2d", { alpha: false });
     if (!context) throw new Error("Canvas 2D is unavailable");
+    // An opaque canvas backing store initializes to solid black, and the font
+    // and WASM loads below leave it on screen for the whole setup window; paint
+    // the theme background first so the mount never flashes a black box.
+    context.fillStyle = `rgb(${options.theme.background.r}, ${options.theme.background.g}, ${options.theme.background.b})`;
+    context.fillRect(0, 0, canvas.width, canvas.height);
     const fontSize = terminalFontSize(options.font?.size);
     try {
       // Cell metrics must come from the faces that will render; measuring before
@@ -644,7 +686,6 @@ export class GhosttyTerminalSurface {
     this.pendingFontEpoch = null;
     this.fontFamily = fontFamily;
     this.requestedFontFamily = font.family;
-    this.requestedFontSize = fontSize;
     this.fontSize = fontSize;
     this.applyFontMetrics();
   }
@@ -700,22 +741,6 @@ export class GhosttyTerminalSurface {
     const width = this.mount.clientWidth;
     const height = this.mount.clientHeight;
     if (width <= 0 || height <= 0) return false;
-    const fitted = fittedTerminalFontSize(
-      (size) => measureGhosttyCell(this.context, size, this.fontFamily).width,
-      this.requestedFontSize,
-      width,
-    );
-    if (fitted !== this.fontSize) {
-      this.fontSize = fitted;
-      this.metrics = measureGhosttyCell(this.context, this.fontSize, this.fontFamily);
-      // The grid-change branch below resizes the core, but only when the
-      // column count moved; the cell geometry always did, so sync it here.
-      this.core.resize(this.cols, this.rows, this.metrics.width, this.metrics.height);
-      this.inputLeft = -1;
-      this.inputTop = -1;
-      this.forceFullRender = true;
-      this.scrollbarDirty = true;
-    }
     const ratio = window.devicePixelRatio || 1;
     const pixelWidth = Math.max(1, Math.round(width * ratio));
     const pixelHeight = Math.max(1, Math.round(height * ratio));
@@ -866,6 +891,7 @@ export class GhosttyTerminalSurface {
   }
 
   private readonly onKeyDown = (event: KeyboardEvent) => {
+    this.updateLinkModifier(event);
     // Presses handled outside the terminal must also swallow their release:
     // beforeKey runs side effects (keybindings, navigation sends), so it cannot
     // be consulted again on keyup, and Kitty report-event-types sessions would
@@ -917,6 +943,7 @@ export class GhosttyTerminalSurface {
   };
 
   private readonly onKeyUp = (event: KeyboardEvent) => {
+    this.updateLinkModifier(event);
     if (this.suppressedKeyCodes.delete(event.code)) return;
     if (event.isComposing || this.composing || event.key === "Process" || event.keyCode === 229) {
       return;
@@ -938,6 +965,8 @@ export class GhosttyTerminalSurface {
 
   private readonly onBlur = () => {
     this.focused = false;
+    this.linkModifierActive = false;
+    this.refreshHoveredLink();
     // Suppressions survive blur deliberately: a shortcut that moves focus (for
     // example terminal-toggle) must still swallow its own keyup if focus comes
     // back before release. Stale entries are harmless — an encoding keydown
@@ -1019,6 +1048,7 @@ export class GhosttyTerminalSurface {
       if (button === null) return;
       event.preventDefault();
       event.stopPropagation();
+      this.clearHoveredLink("default");
       this.mouseReportingPointerId = event.pointerId;
       this.mouseReportingButton = button;
       this.sendMouse("press", button, event);
@@ -1033,6 +1063,7 @@ export class GhosttyTerminalSurface {
       this.canvas.setPointerCapture(event.pointerId);
       return;
     }
+    this.clearHoveredLink();
     const cell = this.cellAt(event.clientX, event.clientY);
     this.selectionMoved = false;
     this.selectionClickSequence = advanceTerminalSelectionClickSequence(
@@ -1080,6 +1111,11 @@ export class GhosttyTerminalSurface {
       shouldReportTerminalMouse(this.core.isMouseAnyEventTracking(), event)
     ) {
       event.preventDefault();
+      this.hoverPointer = { x: event.clientX, y: event.clientY };
+      this.linkModifierActive = isTerminalLinkPointerGesture(event);
+      // A drag whose press was already sent to the terminal application cannot
+      // turn into link activation midway through, so link feedback would lie.
+      this.setHoveredLink(null);
       this.canvas.style.cursor = "default";
       this.sendMouse("motion", this.buttonFromButtons(event.buttons), event);
       return;
@@ -1088,6 +1124,7 @@ export class GhosttyTerminalSurface {
       this.updateHoverCursor(event);
       return;
     }
+    this.clearHoveredLink();
     this.selectionPointer = { x: event.clientX, y: event.clientY };
     const bounds = this.canvas.getBoundingClientRect();
     this.setSelectionAutoscroll(
@@ -1148,10 +1185,50 @@ export class GhosttyTerminalSurface {
   }
 
   private updateHoverCursor(event: PointerEvent): void {
-    const overLink =
-      isTerminalLinkPointerGesture(event) && this.linkAt(event.clientX, event.clientY) !== null;
-    const cursor = overLink ? "pointer" : "";
-    if (this.canvas.style.cursor !== cursor) this.canvas.style.cursor = cursor;
+    this.hoverPointer = { x: event.clientX, y: event.clientY };
+    this.linkModifierActive = isTerminalLinkPointerGesture(event);
+    this.refreshHoveredLink();
+  }
+
+  private updateLinkModifier(event: Pick<KeyboardEvent, "ctrlKey" | "metaKey">): void {
+    const active = isTerminalLinkPointerGesture(event);
+    if (active === this.linkModifierActive) return;
+    this.linkModifierActive = active;
+    this.refreshHoveredLink();
+  }
+
+  private readonly onPointerLeave = () => {
+    this.clearHoveredLink();
+  };
+
+  private clearHoveredLink(cursor = ""): void {
+    this.hoverPointer = null;
+    this.setHoveredLink(null);
+    this.canvas.style.cursor = cursor;
+  }
+
+  private refreshHoveredLink(): void {
+    const pointer = this.hoverPointer;
+    const link =
+      pointer && shouldShowTerminalLinkHover(this.core.isMouseTracking(), this.linkModifierActive)
+        ? this.linkAt(pointer.x, pointer.y)
+        : null;
+    this.setHoveredLink(link);
+  }
+
+  private setHoveredLink(link: TerminalLinkWithRange | null): void {
+    const previous = this.hoveredLink;
+    const unchanged =
+      previous?.text === link?.text &&
+      previous?.range.start.x === link?.range.start.x &&
+      previous?.range.start.y === link?.range.start.y &&
+      previous?.range.end.x === link?.range.end.x &&
+      previous?.range.end.y === link?.range.end.y;
+    this.canvas.style.cursor = link ? "pointer" : "";
+    if (unchanged) return;
+    this.hoveredLink = link;
+    this.forceFullRender = true;
+    this.requestRender();
   }
 
   private readonly onPointerUp = (event: PointerEvent) => {
@@ -1165,7 +1242,7 @@ export class GhosttyTerminalSurface {
       }
       if (event.type !== "pointercancel") {
         const link = this.linkAt(event.clientX, event.clientY);
-        if (link) this.options.onLinkActivate(link, event);
+        if (link) this.options.onLinkActivate(link.text, event);
       }
       return;
     }
@@ -1177,6 +1254,13 @@ export class GhosttyTerminalSurface {
       this.mouseReportingButton = null;
       if (this.canvas.hasPointerCapture(event.pointerId)) {
         this.canvas.releasePointerCapture(event.pointerId);
+      }
+      if (event.type === "pointercancel") {
+        this.clearHoveredLink();
+      } else {
+        this.hoverPointer = { x: event.clientX, y: event.clientY };
+        this.linkModifierActive = isTerminalLinkPointerGesture(event);
+        this.refreshHoveredLink();
       }
       return;
     }
@@ -1304,6 +1388,7 @@ export class GhosttyTerminalSurface {
     this.input.addEventListener("compositionend", this.onCompositionEnd);
     this.canvas.addEventListener("pointerdown", this.onPointerDown);
     this.canvas.addEventListener("pointermove", this.onPointerMove);
+    this.canvas.addEventListener("pointerleave", this.onPointerLeave);
     this.canvas.addEventListener("pointerup", this.onPointerUp);
     this.canvas.addEventListener("pointercancel", this.onPointerUp);
     this.canvas.addEventListener("wheel", this.onWheel, { passive: false });
@@ -1327,6 +1412,7 @@ export class GhosttyTerminalSurface {
     this.input.removeEventListener("compositionend", this.onCompositionEnd);
     this.canvas.removeEventListener("pointerdown", this.onPointerDown);
     this.canvas.removeEventListener("pointermove", this.onPointerMove);
+    this.canvas.removeEventListener("pointerleave", this.onPointerLeave);
     this.canvas.removeEventListener("pointerup", this.onPointerUp);
     this.canvas.removeEventListener("pointercancel", this.onPointerUp);
     this.canvas.removeEventListener("wheel", this.onWheel);
@@ -1429,6 +1515,7 @@ export class GhosttyTerminalSurface {
       this.originY = nextOriginY;
       this.forceFullRender = true;
     }
+    this.refreshHoveredLink();
     renderGhosttySnapshot({
       context: this.context,
       snapshot: this.snapshot,
@@ -1441,6 +1528,7 @@ export class GhosttyTerminalSurface {
       cursorOn: this.cursorOn,
       previousCursorY: this.renderedCursorY,
       focused: this.focused,
+      hoveredLinkRange: this.hoveredLink?.range ?? null,
       ...(this.theme.selectionBackground !== undefined
         ? { selectionBackground: this.theme.selectionBackground }
         : {}),
@@ -1517,12 +1605,51 @@ export class GhosttyTerminalSurface {
     };
   }
 
-  private linkAt(clientX: number, clientY: number): string | null {
+  private linkAt(clientX: number, clientY: number): TerminalLinkWithRange | null {
     if (!this.snapshot) return null;
-    const cell = this.cellAt(clientX, clientY);
+    const cell = terminalGridCellAt({
+      bounds: this.canvas.getBoundingClientRect(),
+      clientX,
+      clientY,
+      cols: this.cols,
+      rows: this.rows,
+      metrics: this.metrics,
+      padding: CONTENT_PADDING,
+      originY: this.originY,
+    });
+    if (!cell) return null;
     const explicitHyperlink = this.core.hyperlinkAt(cell.x, cell.y);
-    if (explicitHyperlink) return explicitHyperlink;
-    return terminalLinkAtPosition(this.snapshot.rowData, cell.y, cell.x);
+    if (explicitHyperlink) {
+      const start = { ...cell };
+      const end = { ...cell };
+      while (true) {
+        const previous =
+          start.x > 0
+            ? { x: start.x - 1, y: start.y }
+            : start.y > 0 && this.snapshot.rowData[start.y]?.isWrapContinuation
+              ? { x: this.cols - 1, y: start.y - 1 }
+              : null;
+        if (!previous || this.core.hyperlinkAt(previous.x, previous.y) !== explicitHyperlink) break;
+        start.x = previous.x;
+        start.y = previous.y;
+      }
+      while (true) {
+        const next =
+          end.x + 1 < this.cols
+            ? { x: end.x + 1, y: end.y }
+            : end.y + 1 < this.rows && this.snapshot.rowData[end.y]?.wrapsToNext
+              ? { x: 0, y: end.y + 1 }
+              : null;
+        if (!next || this.core.hyperlinkAt(next.x, next.y) !== explicitHyperlink) break;
+        end.x = next.x;
+        end.y = next.y;
+      }
+      return {
+        text: explicitHyperlink,
+        range: { start, end },
+      };
+    }
+    return terminalLinkAtPositionWithRange(this.snapshot.rowData, cell.y, cell.x);
   }
 
   private sendMouse(
