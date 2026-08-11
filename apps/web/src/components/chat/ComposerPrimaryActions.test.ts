@@ -3,10 +3,35 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vite-plus/test";
 
 import {
+  formatScheduledLocalTime,
+  parseScheduleDurationSeconds,
   ComposerPrimaryActions,
   formatPendingPrimaryActionLabel,
   preventScheduledMessageSubmitPropagation,
 } from "./ComposerPrimaryActions";
+
+describe("schedule duration compatibility", () => {
+  it("accepts explicit hour, minute, and second durations", () => {
+    expect(parseScheduleDurationSeconds("1h 30m")).toBe(5_400);
+    expect(parseScheduleDurationSeconds("45s")).toBe(45);
+    expect(parseScheduleDurationSeconds("0.5h")).toBe(1_800);
+  });
+
+  it("rejects ambiguous, past, malformed, and excessive durations", () => {
+    expect(parseScheduleDurationSeconds("30")).toBeNull();
+    expect(parseScheduleDurationSeconds("0m")).toBeNull();
+    expect(parseScheduleDurationSeconds("tomorrow")).toBeNull();
+    expect(parseScheduleDurationSeconds("31d")).toBeNull();
+    expect(parseScheduleDurationSeconds("1000h")).toBeNull();
+  });
+
+  it("formats the resolved local fire time", () => {
+    const initial = formatScheduledLocalTime(60, Date.parse("2026-08-11T12:00:00.000Z"));
+    const threeMinutesLater = formatScheduledLocalTime(60, Date.parse("2026-08-11T12:03:00.000Z"));
+    expect(initial).toContain("2026");
+    expect(threeMinutesLater).not.toBe(initial);
+  });
+});
 
 function renderPendingActions(isRunning: boolean) {
   return renderToStaticMarkup(
