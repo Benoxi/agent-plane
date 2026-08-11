@@ -37,4 +37,4 @@ node_modules/
 *.log
 .env*
 !.env.example
-.claude/ai-work/
+.claude/
