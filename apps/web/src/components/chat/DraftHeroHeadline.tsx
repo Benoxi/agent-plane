@@ -1,7 +1,7 @@
 import type { ScopedProjectRef } from "@t3tools/contracts";
 import { scopedProjectKey, scopeProjectRef } from "@t3tools/client-runtime/environment";
 import { FolderPlusIcon } from "lucide-react";
-import { useCallback, useMemo } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 
 import { openCommandPalette } from "~/commandPaletteBus";
 import { useNewThreadHandler } from "~/hooks/useHandleNewThread";
@@ -13,7 +13,7 @@ import {
 } from "~/sidebarProjectGrouping";
 import { useProjects, useThreadShells } from "~/state/entities";
 import { useEnvironments, usePrimaryEnvironmentId } from "~/state/environments";
-import { sortLogicalProjectsForSidebar } from "../Sidebar.logic";
+import { orderItemsByPreferredIds, sortLogicalProjectsForSidebar } from "../Sidebar.logic";
 import {
   Menu,
   MenuItem,
@@ -41,6 +41,8 @@ export function DraftHeroHeadline({
   const projectSortOrder = useClientSettings((settings) => settings.sidebarProjectSortOrder);
   const handleNewThread = useNewThreadHandler();
   const openAddProject = useCallback(() => openCommandPalette({ open: "add-project" }), []);
+  const [projectMenuOpen, setProjectMenuOpen] = useState(false);
+  const projectMenuOrderSnapshotRef = useRef<readonly string[]>([]);
 
   const environmentLabelById = useMemo(
     () =>
@@ -71,13 +73,33 @@ export function DraftHeroHeadline({
       threads,
     ],
   );
+  const displayedProjectGroups = useMemo(
+    () =>
+      projectMenuOpen
+        ? orderItemsByPreferredIds({
+            items: projectGroups,
+            preferredIds: projectMenuOrderSnapshotRef.current,
+            getId: (project) => project.projectKey,
+          })
+        : projectGroups,
+    [projectGroups, projectMenuOpen],
+  );
+  const handleProjectMenuOpenChange = useCallback(
+    (open: boolean) => {
+      if (open) {
+        projectMenuOrderSnapshotRef.current = projectGroups.map((project) => project.projectKey);
+      }
+      setProjectMenuOpen(open);
+    },
+    [projectGroups],
+  );
   const projectPickerEntries = useMemo(
     () =>
       buildSidebarProjectPickerEntries({
-        groups: projectGroups,
+        groups: displayedProjectGroups,
         preferredProjectRef: activeProjectRef,
       }),
-    [activeProjectRef, projectGroups],
+    [activeProjectRef, displayedProjectGroups],
   );
   const projectEntryByKey = useMemo(
     () => new Map(projectPickerEntries.map((entry) => [entry.group.projectKey, entry] as const)),
@@ -98,10 +120,10 @@ export function DraftHeroHeadline({
   const shouldShowProjectMenu = canChooseProject;
 
   const projectSelector = shouldShowProjectMenu ? (
-    <Menu>
+    <Menu open={projectMenuOpen} onOpenChange={handleProjectMenuOpenChange}>
       <MenuTrigger
         aria-label={hasResolvedProject ? "Change project" : "Choose a project"}
-        className="pointer-events-auto inline-block max-w-64 truncate border-foreground/60 border-b border-dotted align-bottom text-foreground transition-colors hover:border-foreground/80 focus-visible:rounded-sm focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
+        className="pointer-events-auto inline-block max-w-64 truncate border-foreground/60 border-b border-dotted align-baseline text-foreground transition-colors hover:border-foreground/80 focus-visible:rounded-sm focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
         title={activeProjectDisplayName ?? undefined}
       >
         {activeProjectDisplayName ?? "Choose a project"}

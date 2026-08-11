@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 import {
   collectSpeechRecognitionText,
   createComposerSpeechRecognition,
+  createSpeechRecognitionTranscriptTracker,
   detectSpeechRecognitionSupport,
   speechRecognitionErrorMessage,
 } from "./speechRecognition";
@@ -48,9 +49,10 @@ function makeResult(transcript: string, isFinal: boolean): SpeechRecognitionResu
 
 function makeRecognitionEvent(
   results: ReadonlyArray<SpeechRecognitionResult>,
+  resultIndex = 0,
 ): SpeechRecognitionEvent {
   return {
-    resultIndex: 0,
+    resultIndex,
     results: {
       length: results.length,
       item: (index: number) => results[index]!,
@@ -125,6 +127,48 @@ describe("speechRecognition", () => {
     expect(text).toEqual({ finalText: "", interimText: "" });
   });
 
+  it("replaces interim text and does not duplicate replayed final result slots", () => {
+    const tracker = createSpeechRecognitionTranscriptTracker();
+
+    expect(tracker.update(makeRecognitionEvent([makeResult("hello wor", false)]))).toEqual({
+      finalText: "",
+      interimText: "hello wor",
+    });
+    expect(tracker.update(makeRecognitionEvent([makeResult("hello world", true)]))).toEqual({
+      finalText: "hello world",
+      interimText: "",
+    });
+    expect(
+      tracker.update(
+        makeRecognitionEvent(
+          [makeResult("hello world", true), makeResult("from Chrome", false)],
+          1,
+        ),
+      ),
+    ).toEqual({
+      finalText: "hello world",
+      interimText: "from Chrome",
+    });
+    expect(
+      tracker.update(
+        makeRecognitionEvent([makeResult("hello world", true), makeResult("from Chrome", true)], 0),
+      ),
+    ).toEqual({
+      finalText: "hello world from Chrome",
+      interimText: "",
+    });
+  });
+
+  it("retains deliberately repeated words when Chrome reports separate result slots", () => {
+    const tracker = createSpeechRecognitionTranscriptTracker();
+
+    expect(
+      tracker.update(
+        makeRecognitionEvent([makeResult("very", true), makeResult("very useful", true)]),
+      ),
+    ).toEqual({ finalText: "very very useful", interimText: "" });
+  });
+
   it("configures and starts a composer recognizer", () => {
     const instances: FakeSpeechRecognition[] = [];
     class CapturingSpeechRecognition extends FakeSpeechRecognition {
@@ -188,5 +232,84 @@ describe("speechRecognition", () => {
     expect(onInterimText).toHaveBeenCalledWith("interim");
     expect(onError).toHaveBeenCalledWith("No speech detected.");
     expect(onEnd).toHaveBeenCalledOnce();
+  });
+
+  it("aborts and ignores late callbacks after disposal during interim delivery", () => {
+    const instances: FakeSpeechRecognition[] = [];
+    class CapturingSpeechRecognition extends FakeSpeechRecognition {
+      constructor() {
+        super();
+        instances.push(this);
+      }
+    }
+    installWindow({ SpeechRecognition: CapturingSpeechRecognition });
+    const onFinalText = vi.fn();
+    const onInterimText = vi.fn();
+    const onError = vi.fn();
+    const onEnd = vi.fn();
+    const recognizer = createComposerSpeechRecognition({
+      language: "en-US",
+      onFinalText,
+      onInterimText,
+      onError,
+      onEnd,
+    });
+    const instance = instances[0]!;
+
+    instance.dispatchEvent(
+      Object.assign(new Event("result"), makeRecognitionEvent([makeResult("drafting", false)])),
+    );
+    expect(onInterimText).toHaveBeenLastCalledWith("drafting");
+
+    recognizer.dispose();
+    recognizer.dispose();
+    instance.dispatchEvent(
+      Object.assign(new Event("result"), makeRecognitionEvent([makeResult("too late", true)])),
+    );
+    instance.dispatchEvent(Object.assign(new Event("error"), { error: "network" }));
+    instance.dispatchEvent(new Event("end"));
+
+    expect(instance.abort).toHaveBeenCalledOnce();
+    expect(onFinalText).not.toHaveBeenCalled();
+    expect(onInterimText).toHaveBeenCalledOnce();
+    expect(onError).not.toHaveBeenCalled();
+    expect(onEnd).not.toHaveBeenCalled();
+  });
+
+  it("stops final-result delivery immediately when disposal occurs in its callback", () => {
+    const instances: FakeSpeechRecognition[] = [];
+    class CapturingSpeechRecognition extends FakeSpeechRecognition {
+      constructor() {
+        super();
+        instances.push(this);
+      }
+    }
+    installWindow({ SpeechRecognition: CapturingSpeechRecognition });
+    let recognizer: ReturnType<typeof createComposerSpeechRecognition>;
+    const onFinalText = vi.fn(() => recognizer.dispose());
+    const onInterimText = vi.fn();
+    const onError = vi.fn();
+    const onEnd = vi.fn();
+    recognizer = createComposerSpeechRecognition({
+      language: "en-US",
+      onFinalText,
+      onInterimText,
+      onError,
+      onEnd,
+    });
+    const instance = instances[0]!;
+
+    instance.dispatchEvent(
+      Object.assign(
+        new Event("result"),
+        makeRecognitionEvent([makeResult("already final", true), makeResult("too late", false)]),
+      ),
+    );
+    instance.dispatchEvent(new Event("end"));
+
+    expect(onFinalText).toHaveBeenCalledWith("already final");
+    expect(onInterimText).not.toHaveBeenCalled();
+    expect(onEnd).not.toHaveBeenCalled();
+    expect(instance.abort).toHaveBeenCalledOnce();
   });
 });

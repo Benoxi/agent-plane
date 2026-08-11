@@ -160,7 +160,10 @@ export default function FileBrowserPanel({
       );
       if (clicked === "copy-mention") {
         try {
-          await writeTextToClipboard(mention);
+          await writeTextToClipboard(mention, "file mention", {
+            announceSuccess: false,
+            announceFailure: false,
+          });
           toastManager.add({ type: "success", title: "Mention copied", description: relativePath });
         } catch (error) {
           toastManager.add({

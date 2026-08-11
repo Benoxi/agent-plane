@@ -59,6 +59,7 @@ import {
   collapseExpandedComposerCursor,
   expandCollapsedComposerCursor,
   isCollapsedCursorAdjacentToInlineToken,
+  insertFencedCodeBlock,
 } from "~/composer-logic";
 import {
   selectionTouchesMentionBoundary,
@@ -72,8 +73,8 @@ import { cn, isMacPlatform } from "~/lib/utils";
 import { basenameOfPath } from "~/pierre-icons";
 import {
   COMPOSER_INLINE_CHIP_ICON_CLASS_NAME,
-  COMPOSER_INLINE_CHIP_LABEL_CLASS_NAME,
   COMPOSER_INLINE_SKILL_CHIP_CLASS_NAME,
+  COMPOSER_INLINE_SKILL_CHIP_LABEL_CLASS_NAME,
   SKILL_CHIP_ICON_SVG,
 } from "./composerInlineChip";
 import { FILE_TAG_CHIP_CLASS_NAME, FileTagChipContent } from "./chat/FileTagChip";
@@ -188,7 +189,7 @@ class ComposerMentionNode extends DecoratorNode<React.ReactElement> {
 
   override createDOM(): HTMLElement {
     const dom = document.createElement("span");
-    dom.className = "composer-inline-chip relative inline-flex align-middle leading-none";
+    dom.className = "composer-inline-chip relative inline-flex align-[-0.125em] leading-none";
     return dom;
   }
 
@@ -224,7 +225,7 @@ function resolveSkillDescription(
   return description || null;
 }
 
-type ComposerSkillMetadata = {
+export type ComposerSkillMetadata = {
   label: string;
   description: string | null;
 };
@@ -256,7 +257,7 @@ function ComposerSkillDecorator(props: { skillLabel: string; skillDescription: s
         className={COMPOSER_INLINE_CHIP_ICON_CLASS_NAME}
         dangerouslySetInnerHTML={{ __html: SKILL_CHIP_ICON_SVG }}
       />
-      <span className={COMPOSER_INLINE_CHIP_LABEL_CLASS_NAME}>{props.skillLabel}</span>
+      <span className={COMPOSER_INLINE_SKILL_CHIP_LABEL_CLASS_NAME}>{props.skillLabel}</span>
     </span>
   );
 
@@ -326,7 +327,7 @@ class ComposerSkillNode extends DecoratorNode<React.ReactElement> {
 
   override createDOM(): HTMLElement {
     const dom = document.createElement("span");
-    dom.className = "composer-inline-chip relative inline-flex align-middle leading-none";
+    dom.className = "composer-inline-chip relative inline-flex align-[-0.125em] leading-none";
     return dom;
   }
 
@@ -397,7 +398,7 @@ class ComposerTerminalContextNode extends DecoratorNode<React.ReactElement> {
 
   override createDOM(): HTMLElement {
     const dom = document.createElement("span");
-    dom.className = "composer-inline-chip relative inline-flex align-middle leading-none";
+    dom.className = "composer-inline-chip relative inline-flex align-[-0.125em] leading-none";
     return dom;
   }
 
@@ -775,6 +776,24 @@ function getSelectionRangeForExpandedComposerOffsets(selection: ReturnType<typeo
   };
 }
 
+function getSelectionRangeForComposerOffsets(selection: ReturnType<typeof $getSelection>): {
+  start: number;
+  end: number;
+} | null {
+  if (!$isRangeSelection(selection)) {
+    return null;
+  }
+  const anchorOffset = getAbsoluteOffsetForPoint(
+    selection.anchor.getNode(),
+    selection.anchor.offset,
+  );
+  const focusOffset = getAbsoluteOffsetForPoint(selection.focus.getNode(), selection.focus.offset);
+  return {
+    start: Math.min(anchorOffset, focusOffset),
+    end: Math.max(anchorOffset, focusOffset),
+  };
+}
+
 function $selectionTouchesInlineToken(selection: ReturnType<typeof $getSelection>): boolean {
   if (!$isRangeSelection(selection)) {
     return false;
@@ -854,6 +873,35 @@ function $setComposerEditorPrompt(
   }
 }
 
+export function $insertFencedCodeBlockAtSelection(
+  terminalContexts: ReadonlyArray<TerminalContextDraft>,
+  skillMetadata: ReadonlyMap<string, ComposerSkillMetadata>,
+): boolean {
+  const selection = $getSelection();
+  const expandedRange = getSelectionRangeForExpandedComposerOffsets(selection);
+  const collapsedRange = getSelectionRangeForComposerOffsets(selection);
+  if (!expandedRange || !collapsedRange) {
+    return false;
+  }
+
+  const currentValue = $getRoot().getTextContent();
+  const selectionIsSafeToWrap =
+    !$selectionTouchesInlineToken(selection) &&
+    !selectionTouchesMentionBoundary(currentValue, expandedRange.start, expandedRange.end);
+  const insertionStart = selectionIsSafeToWrap
+    ? expandedRange.start
+    : expandCollapsedComposerCursor(currentValue, collapsedRange.end);
+  const insertionEnd = selectionIsSafeToWrap ? expandedRange.end : insertionStart;
+  const insertion = insertFencedCodeBlock(currentValue, insertionStart, insertionEnd);
+
+  $setComposerEditorPrompt(insertion.value, terminalContexts, skillMetadata);
+  $setSelectionRangeAtComposerOffsets(
+    collapseExpandedComposerCursor(insertion.value, insertion.selectionStart),
+    collapseExpandedComposerCursor(insertion.value, insertion.selectionEnd),
+  );
+  return true;
+}
+
 function collectTerminalContextIds(node: LexicalNode): string[] {
   if (node instanceof ComposerTerminalContextNode) {
     return [node.__context.id];
@@ -868,6 +916,7 @@ export interface ComposerPromptEditorHandle {
   focus: () => void;
   focusAt: (cursor: number) => void;
   focusAtEnd: () => void;
+  insertFencedCodeBlock: () => boolean;
   readSnapshot: () => {
     value: string;
     cursor: number;
@@ -1676,6 +1725,19 @@ function ComposerPromptEditorInner({
     return snapshot;
   }, [editor]);
 
+  const insertFencedCodeBlockAtSelection = useCallback((): boolean => {
+    const rootElement = editor.getRootElement();
+    if (!rootElement || document.activeElement !== rootElement) {
+      return false;
+    }
+
+    let inserted = false;
+    editor.update(() => {
+      inserted = $insertFencedCodeBlockAtSelection(terminalContexts, skillMetadataRef.current);
+    });
+    return inserted;
+  }, [editor, terminalContexts]);
+
   useImperativeHandle(
     editorRef,
     () => ({
@@ -1691,9 +1753,10 @@ function ComposerPromptEditorInner({
           ),
         );
       },
+      insertFencedCodeBlock: insertFencedCodeBlockAtSelection,
       readSnapshot,
     }),
-    [focusAt, readSnapshot],
+    [focusAt, insertFencedCodeBlockAtSelection, readSnapshot],
   );
 
   const handleEditorChange = useCallback((editorState: EditorState) => {
@@ -1765,7 +1828,7 @@ function ComposerPromptEditorInner({
           }
           placeholder={
             terminalContexts.length > 0 ? null : (
-              <div className="pointer-events-none absolute inset-0 leading-relaxed text-muted-foreground/35">
+              <div className="pointer-events-none absolute inset-0 leading-relaxed text-placeholder">
                 {placeholder}
               </div>
             )

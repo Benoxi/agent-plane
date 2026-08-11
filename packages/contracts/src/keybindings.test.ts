@@ -72,6 +72,12 @@ it.effect("parses keybinding rules", () =>
     });
     assert.strictEqual(parsedProjectSearch.command, "projectSearch.toggle");
 
+    const parsedThemeEditor = yield* decode(KeybindingRule, {
+      key: "mod+alt+shift+t",
+      command: "themeEditor.toggle",
+    });
+    assert.strictEqual(parsedThemeEditor.command, "themeEditor.toggle");
+
     const parsedLocal = yield* decode(KeybindingRule, {
       key: "mod+shift+n",
       command: "chat.newLocal",
@@ -117,6 +123,16 @@ it.effect("accepts dynamic script run commands", () =>
       command: "script.setup.run",
     });
     assert.strictEqual(parsed.command, "script.setup.run");
+  }),
+);
+
+it.effect("accepts the fenced-code composer command", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decode(KeybindingRule, {
+      key: "mod+shift+e",
+      command: "composer.insertFencedCodeBlock",
+    });
+    assert.strictEqual(parsed.command, "composer.insertFencedCodeBlock");
   }),
 );
 

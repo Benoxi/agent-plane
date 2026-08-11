@@ -122,6 +122,10 @@ describe("KeybindingsSettings.logic", () => {
 
   it("formats static and project script command labels", () => {
     expect(commandLabel("commandPalette.toggle")).toBe("Command Palette: Toggle");
+    expect(commandLabel("composer.insertFencedCodeBlock")).toBe(
+      "Composer: Insert Fenced Code Block",
+    );
+    expect(commandLabel("themeEditor.toggle")).toBe("Theme Editor: Toggle");
     expect(commandLabel("script.setup-db.run")).toBe("Run Script: Setup Db");
   });
 

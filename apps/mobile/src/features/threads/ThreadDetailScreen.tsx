@@ -17,7 +17,11 @@ import type {
 import * as Haptics from "expo-haptics";
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Platform, View, type GestureResponderEvent } from "react-native";
-import { KeyboardController, KeyboardStickyView } from "react-native-keyboard-controller";
+import {
+  KeyboardController,
+  KeyboardStickyView,
+  useKeyboardState,
+} from "react-native-keyboard-controller";
 import Animated, { FadeInDown, FadeOut } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
@@ -54,13 +58,15 @@ export interface ThreadDetailScreenProps {
   readonly respondingApprovalId: ApprovalRequestId | null;
   readonly activePendingUserInput: PendingUserInput | null;
   readonly activePendingUserInputDrafts: Record<string, PendingUserInputDraftAnswer>;
-  readonly activePendingUserInputAnswers: Record<string, string> | null;
+  readonly activePendingUserInputAnswers: Record<string, string | string[]> | null;
   readonly respondingUserInputId: ApprovalRequestId | null;
   readonly draftMessage: string;
   readonly draftAttachments: ReadonlyArray<DraftComposerImageAttachment>;
   readonly connectionStateLabel: EnvironmentConnectionPhase;
   /** Message sync status for the selected thread (drives the composer status pill). */
   readonly threadSyncStatus?: EnvironmentThreadStatus;
+  /** Non-null when older turns exist beyond the loaded window. */
+  readonly loadEarlier?: { readonly loading: boolean; readonly onLoadEarlier: () => void } | null;
   readonly activeThreadBusy: boolean;
   readonly environmentId: EnvironmentId;
   readonly projectWorkspaceRoot: string | null;
@@ -181,7 +187,11 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
   const lastScrolledAnchorMessageIdRef = useRef<MessageId | null>(null);
   const [composerExpanded, setComposerExpanded] = useState(false);
   const [anchorMessageId, setAnchorMessageId] = useState<MessageId | null>(null);
-  const composerBottomInset = composerExpanded ? 0 : Math.max(insets.bottom, 12);
+  // Key the safe-area padding on keyboard visibility, not focus: on Android
+  // the back gesture closes the keyboard while the editor stays focused, and
+  // a focus-keyed inset would leave the toolbar under the gesture bar.
+  const isKeyboardVisible = useKeyboardState((state) => state.isVisible);
+  const composerBottomInset = isKeyboardVisible ? 0 : Math.max(insets.bottom, 12);
   const contentPresentationKind = props.contentPresentation.kind;
   // The raw sync status enters "synchronizing" on every full fetch, cached or
   // not. Whether messages are already on screen decides the pill label: no
@@ -371,6 +381,7 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
             usesAutomaticContentInsets={props.usesAutomaticContentInsets}
             onHeaderMaterialVisibilityChange={props.onHeaderMaterialVisibilityChange}
             skills={selectedProviderSkills}
+            loadEarlier={props.loadEarlier ?? null}
           />
         </View>
       ) : (

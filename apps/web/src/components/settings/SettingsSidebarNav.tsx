@@ -11,7 +11,6 @@ import {
   ArchiveIcon,
   ArrowLeftIcon,
   BotIcon,
-  FlaskConicalIcon,
   GitBranchIcon,
   KeyboardIcon,
   Link2Icon,
@@ -52,7 +51,6 @@ const SETTINGS_SECTION_ICONS: Readonly<
   "/settings/providers": BotIcon,
   "/settings/source-control": GitBranchIcon,
   "/settings/connections": Link2Icon,
-  "/settings/beta": FlaskConicalIcon,
   "/settings/archived": ArchiveIcon,
 };
 
@@ -75,7 +73,7 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
   const navigate = useNavigate();
   const currentHash = useLocation({ select: (location) => location.hash });
   const canGoBack = useCanGoBack();
-  const { isMobile, setOpenMobile, open, setOpen } = useSidebar();
+  const { closeMobileSidebar, isMobile, setOpenMobile, open, setOpen } = useSidebar();
   const searchInputRef = useRef<HTMLInputElement>(null);
   const [query, setQuery] = useState("");
   const [activeResultIndex, setActiveResultIndex] = useState(0);
@@ -122,15 +120,17 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [isMobile, open, setOpen, setOpenMobile]);
-
   const handleSectionClick = useCallback(
     (to: SettingsPath) => {
       if (isMobile) {
-        setOpenMobile(false);
+        closeMobileSidebar(() => {
+          void navigate({ to, replace: true });
+        });
+        return;
       }
       void navigate({ to, hash: "", replace: true, hashScrollIntoView: false });
     },
-    [isMobile, navigate, setOpenMobile],
+    [closeMobileSidebar, isMobile, navigate],
   );
   const clearSearch = useCallback(() => {
     setQuery("");
@@ -139,17 +139,21 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
   const handleSearchResultClick = useCallback(
     (item: SettingsSearchItem) => {
       clearSearch();
+      const navigateToResult = () => {
+        const targetId = item.targetId ?? item.id;
+        if (pathname === item.to && currentHash.replace(/^#/, "") === targetId) {
+          scrollToSettingsTarget(targetId);
+          return;
+        }
+        void navigate({ to: item.to, hash: targetId, replace: true, hashScrollIntoView: false });
+      };
       if (isMobile) {
-        setOpenMobile(false);
-      }
-      const targetId = item.targetId ?? item.id;
-      if (pathname === item.to && currentHash.replace(/^#/, "") === targetId) {
-        scrollToSettingsTarget(targetId);
+        closeMobileSidebar(navigateToResult);
         return;
       }
-      void navigate({ to: item.to, hash: targetId, replace: true, hashScrollIntoView: false });
+      navigateToResult();
     },
-    [clearSearch, currentHash, isMobile, navigate, pathname, setOpenMobile],
+    [clearSearch, closeMobileSidebar, currentHash, isMobile, navigate, pathname],
   );
   const handleSearchKeyDown = useCallback(
     (event: KeyboardEvent<HTMLInputElement>) => {
@@ -180,14 +184,21 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
   );
   const handleBackClick = useCallback(() => {
     if (isMobile) {
-      setOpenMobile(false);
+      closeMobileSidebar(() => {
+        if (canGoBack) {
+          window.history.back();
+          return;
+        }
+        void navigate({ to: "/" });
+      });
+      return;
     }
     if (canGoBack) {
       window.history.back();
       return;
     }
     void navigate({ to: "/" });
-  }, [canGoBack, isMobile, navigate, setOpenMobile]);
+  }, [canGoBack, closeMobileSidebar, isMobile, navigate]);
 
   return (
     <>
@@ -234,9 +245,7 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
                 <XIcon className="size-3" />
               </Button>
             ) : (
-              <Kbd className="mr-px h-4 min-w-0 rounded-sm bg-sidebar-control-surface px-1.5 text-[10px] text-sidebar-muted-foreground ring-1 ring-sidebar-border">
-                /
-              </Kbd>
+              <Kbd className="h-4 min-w-0 rounded-sm px-1.5 text-[10px]">/</Kbd>
             )}
           </div>
           {isSearching && results.length === 0 ? (
@@ -281,7 +290,7 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
                 ))
               : SETTINGS_NAV_ITEMS.map((item) => {
                   const Icon = item.icon;
-                  const isActive = pathname === item.to;
+                  const isActive = pathname === item.to || pathname.startsWith(`${item.to}/`);
                   return (
                     <SidebarMenuItem key={item.to}>
                       <SidebarMenuButton

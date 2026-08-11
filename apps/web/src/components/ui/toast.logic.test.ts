@@ -2,9 +2,21 @@ import type { ScopedThreadRef } from "@t3tools/contracts";
 import { assert, describe, it } from "vite-plus/test";
 import {
   buildVisibleToastLayout,
+  errorDescriptionClampClass,
   shouldHideCollapsedToastContent,
   shouldRenderThreadScopedToast,
 } from "./toast.logic";
+
+describe("errorDescriptionClampClass", () => {
+  it("shows ordinary and non-error descriptions without truncation", () => {
+    assert.equal(errorDescriptionClampClass("error", "A short error"), undefined);
+    assert.equal(errorDescriptionClampClass("warning", "x".repeat(200)), undefined);
+  });
+
+  it("allows eight lines of context for long error descriptions", () => {
+    assert.equal(errorDescriptionClampClass("error", "x".repeat(180)), "line-clamp-8");
+  });
+});
 
 describe("shouldHideCollapsedToastContent", () => {
   it("keeps a single visible toast readable", () => {

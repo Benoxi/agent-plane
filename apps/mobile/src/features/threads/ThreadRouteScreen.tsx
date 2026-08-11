@@ -8,8 +8,12 @@ import {
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import * as Option from "effect/Option";
 import { EnvironmentId, ThreadId, type ProjectScript } from "@t3tools/contracts";
+import {
+  requestOlderThreadTurns,
+  threadHasOlderTurns,
+} from "@t3tools/client-runtime/state/threads";
 import { projectScriptCwd, projectScriptRuntimeEnv } from "@t3tools/shared/projectScripts";
-import { Platform, ScrollView, View } from "react-native";
+import { Alert, Platform, ScrollView, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useWorkspaceState } from "../../state/workspace";
 import { useEnvironmentQuery } from "../../state/query";
@@ -23,6 +27,11 @@ import {
 } from "../../components/AndroidScreenHeader";
 import { LoadingScreen } from "../../components/LoadingScreen";
 import { scopedThreadKey } from "../../lib/scopedEntities";
+import {
+  formatMobileConversationForClipboard,
+  mobileConversationHasCopyableContent,
+} from "../../lib/conversationCopy";
+import { copyTextWithHaptic } from "../../lib/copyTextWithHaptic";
 import { NATIVE_LIQUID_GLASS_SUPPORTED } from "../../native/native-glass";
 import { connectionTone } from "../connection/connectionTone";
 
@@ -190,8 +199,23 @@ function ThreadRouteContent(
     useThreadSelection();
   const selectedThreadDetailState = props.selectedThreadDetailState;
   const selectedThreadDetail = Option.getOrNull(selectedThreadDetailState.data);
+  // "Load earlier turns" header state for windowed (paginated) thread loads.
+  const loadEarlierTurns = useMemo(() => {
+    if (selectedThread === null || !threadHasOlderTurns(selectedThreadDetailState)) {
+      return null;
+    }
+    return {
+      loading:
+        selectedThreadDetailState.page._tag === "Some" &&
+        selectedThreadDetailState.page.value.loadingOlder,
+      onLoadEarlier: () => {
+        requestOlderThreadTurns(selectedThread.environmentId, selectedThread.id);
+      },
+    };
+  }, [selectedThread, selectedThreadDetailState]);
   const { selectedThreadCwd } = useSelectedThreadWorktree();
   const composer = useThreadComposerState();
+  const [conversationCopied, setConversationCopied] = useState(false);
   const gitState = useSelectedThreadGitState();
   const gitActions = useSelectedThreadGitActions();
   const requests = useSelectedThreadRequests();
@@ -280,6 +304,43 @@ function ThreadRouteContent(
 
   /* ─── Native header theming ──────────────────────────────────────── */
   const usesNativeHeaderGlass = NATIVE_LIQUID_GLASS_SUPPORTED;
+  const canCopyConversation = useMemo(
+    () => mobileConversationHasCopyableContent(composer.selectedThreadFeed),
+    [composer.selectedThreadFeed],
+  );
+  const handleCopyConversation = useCallback(() => {
+    let conversationCopyText: string;
+    try {
+      conversationCopyText = formatMobileConversationForClipboard({
+        title: selectedThread?.title ?? "Conversation",
+        entries: composer.selectedThreadFeed,
+      });
+    } catch {
+      setConversationCopied(false);
+      Alert.alert(
+        "Couldn't copy conversation",
+        "The conversation couldn't be prepared for copying. Try again.",
+      );
+      return;
+    }
+    if (!conversationCopyText) return;
+    void copyTextWithHaptic(conversationCopyText, { target: "conversation" }).then((didCopy) => {
+      if (!didCopy) {
+        setConversationCopied(false);
+        Alert.alert(
+          "Couldn't copy conversation",
+          "Clipboard access was unavailable. Try again after checking app permissions.",
+        );
+        return;
+      }
+      setConversationCopied(true);
+    });
+  }, [composer.selectedThreadFeed, selectedThread?.title]);
+  useEffect(() => {
+    if (!conversationCopied) return;
+    const timeoutId = setTimeout(() => setConversationCopied(false), 1_200);
+    return () => clearTimeout(timeoutId);
+  }, [conversationCopied]);
   const headerSubtitle = [
     selectedThreadProject?.title ?? null,
     selectedEnvironmentConnection?.environmentLabel ?? null,
@@ -619,6 +680,29 @@ function ThreadRouteContent(
   };
   const threadCenterHeaderItems = useThreadGitCenterHeaderItems(threadGitControlProps);
   const compactRightHeaderItems = useThreadGitRightHeaderItems(threadGitControlProps);
+  const copyConversationHeaderItem = useMemo(
+    () =>
+      withNativeGlassHeaderItem({
+        accessibilityLabel: conversationCopied ? "Copied conversation" : "Copy conversation",
+        disabled: !canCopyConversation,
+        icon: {
+          name: conversationCopied ? "checkmark" : "doc.on.doc",
+          type: "sfSymbol" as const,
+        },
+        identifier: "thread-right-copy-conversation",
+        onPress: handleCopyConversation,
+        type: "button" as const,
+      }),
+    [canCopyConversation, conversationCopied, handleCopyConversation],
+  );
+  const splitRightHeaderItems = useMemo<NativeHeaderItems>(
+    () => [copyConversationHeaderItem, ...threadCenterHeaderItems],
+    [copyConversationHeaderItem, threadCenterHeaderItems],
+  );
+  const compactThreadRightHeaderItems = useMemo<NativeHeaderItems>(
+    () => [copyConversationHeaderItem, ...compactRightHeaderItems],
+    [copyConversationHeaderItem, compactRightHeaderItems],
+  );
   const splitLeftHeaderItems = useMemo<NativeHeaderItems>(
     () => [
       {
@@ -671,6 +755,14 @@ function ThreadRouteContent(
         onPress: props.onReturnToThread,
       });
     }
+    actions.push({
+      accessibilityLabel: conversationCopied ? "Copied conversation" : "Copy conversation",
+      icon: conversationCopied
+        ? { ios: "checkmark", android: "check" }
+        : { ios: "doc.on.doc", android: "content_copy" },
+      onPress: handleCopyConversation,
+      disabled: !canCopyConversation,
+    });
     if (selectedThreadCwd !== null) {
       actions.push({
         accessibilityLabel: "Open files",
@@ -700,6 +792,9 @@ function ThreadRouteContent(
     return actions;
   }, [
     fileInspector.supported,
+    conversationCopied,
+    canCopyConversation,
+    handleCopyConversation,
     handleOpenFilesInspector,
     handleOpenTerminal,
     handleOpenGitInspector,
@@ -766,6 +861,7 @@ function ThreadRouteContent(
           draftAttachments={composer.draftAttachments}
           connectionStateLabel={routeConnectionState}
           threadSyncStatus={selectedThreadDetailState.status}
+          loadEarlier={loadEarlierTurns}
           activeThreadBusy={composer.activeThreadBusy}
           environmentId={selectedThread.environmentId}
           projectWorkspaceRoot={selectedThreadProject?.workspaceRoot ?? null}
@@ -827,7 +923,7 @@ function ThreadRouteContent(
           // reserved for future breadcrumbs/status).
           unstable_headerRightItems:
             Platform.OS === "ios"
-              ? () => (layout.usesSplitView ? threadCenterHeaderItems : compactRightHeaderItems)
+              ? () => (layout.usesSplitView ? splitRightHeaderItems : compactThreadRightHeaderItems)
               : undefined,
           unstable_headerSubtitle: usesNativeHeaderGlass ? headerSubtitle : undefined,
         }}

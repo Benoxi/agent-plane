@@ -10,6 +10,7 @@ import {
   PASTE_COMMAND,
 } from "lexical";
 
+import { $insertFencedCodeBlockAtSelection } from "./ComposerPromptEditor";
 import { registerComposerInlineTokenPaste } from "./composerInlineTokenPaste";
 
 class TestClipboardEvent extends Event {
@@ -23,6 +24,32 @@ class TestClipboardEvent extends Event {
     } as unknown as DataTransfer;
   }
 }
+
+describe("$insertFencedCodeBlockAtSelection", () => {
+  it("wraps the Lexical selection and preserves it inside the fences", () => {
+    const editor = createEditor();
+
+    editor.update(
+      () => {
+        const paragraph = $createParagraphNode();
+        const text = $createTextNode("Run npm test now");
+        paragraph.append(text);
+        $getRoot().append(paragraph);
+        text.select(4, 12);
+
+        expect($insertFencedCodeBlockAtSelection([], new Map())).toBe(true);
+      },
+      { discrete: true },
+    );
+
+    editor.getEditorState().read(() => {
+      expect($getRoot().getTextContent()).toBe("Run \n```\nnpm test\n```\n now");
+      const selection = $getSelection();
+      expect($isRangeSelection(selection)).toBe(true);
+      expect(selection?.getTextContent()).toBe("npm test");
+    });
+  });
+});
 
 describe("registerComposerInlineTokenPaste", () => {
   afterEach(() => {

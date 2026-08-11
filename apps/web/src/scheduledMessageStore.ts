@@ -7,6 +7,7 @@ import {
   RuntimeMode,
   type ScopedThreadRef,
   ThreadId,
+  type UploadChatAttachment,
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 import { useSyncExternalStore } from "react";
@@ -21,12 +22,33 @@ export type ScheduledMessageStatus = typeof ScheduledMessageStatus.Type;
 export const ScheduledMessageSource = Schema.Literals(["manual", "rate-limit-auto-continue"]);
 export type ScheduledMessageSource = typeof ScheduledMessageSource.Type;
 
+const ScheduledUploadChatImageAttachment = Schema.Struct({
+  type: Schema.Literal("image"),
+  name: Schema.String,
+  mimeType: Schema.String,
+  sizeBytes: Schema.Number,
+  dataUrl: Schema.String,
+});
+
+const ScheduledUploadChatAttachment = Schema.Union([ScheduledUploadChatImageAttachment]);
+
+export const ScheduledMessageSummary = Schema.Struct({
+  imageCount: Schema.optional(Schema.Number),
+  terminalContextCount: Schema.optional(Schema.Number),
+  elementContextCount: Schema.optional(Schema.Number),
+  previewAnnotationCount: Schema.optional(Schema.Number),
+  reviewCommentCount: Schema.optional(Schema.Number),
+});
+export type ScheduledMessageSummary = typeof ScheduledMessageSummary.Type;
+
 export const ScheduledMessage = Schema.Struct({
   id: Schema.String,
   environmentId: EnvironmentId,
   threadId: ThreadId,
   text: Schema.String,
   outgoingText: Schema.String,
+  attachments: Schema.optional(Schema.Array(ScheduledUploadChatAttachment)),
+  summary: Schema.optional(ScheduledMessageSummary),
   titleSeed: Schema.String,
   modelSelection: ModelSelectionSchema,
   runtimeMode: RuntimeMode,
@@ -50,6 +72,8 @@ interface ScheduleThreadMessageInput {
   threadId: ThreadId;
   text: string;
   outgoingText: string;
+  attachments?: ReadonlyArray<UploadChatAttachment>;
+  summary?: ScheduledMessageSummary;
   titleSeed: string;
   modelSelection: ModelSelection;
   runtimeMode: ScheduledMessage["runtimeMode"];
@@ -86,7 +110,6 @@ export function hydrateScheduledMessageState(
   input: ScheduledMessageState,
   now = new Date(),
 ): ScheduledMessageState {
-  const nowMillis = now.getTime();
   const items = sortItems(
     input.items.map((item) => {
       if (item.status === "sending") {
@@ -96,11 +119,11 @@ export function hydrateScheduledMessageState(
           lastError: "Sending was interrupted before the app finished dispatching this message.",
         };
       }
-      if (item.status === "pending" && Date.parse(item.scheduledFor) <= nowMillis) {
+      if (item.status === "pending" && Date.parse(item.scheduledFor) <= now.getTime()) {
         return {
           ...item,
           status: "expired" as const,
-          lastError: undefined,
+          lastError: "This scheduled message became due while the app was closed.",
         };
       }
       return item;
@@ -119,11 +142,7 @@ function readPersistedState(): ScheduledMessageState {
 }
 
 function writePersistedState(nextState: ScheduledMessageState) {
-  try {
-    setLocalStorageItem(SCHEDULED_MESSAGE_STORAGE_KEY, nextState, ScheduledMessageState);
-  } catch (error) {
-    console.error("Could not write scheduled messages.", error);
-  }
+  setLocalStorageItem(SCHEDULED_MESSAGE_STORAGE_KEY, nextState, ScheduledMessageState);
 }
 
 function notifyListeners() {
@@ -133,10 +152,10 @@ function notifyListeners() {
 }
 
 function replaceState(nextState: ScheduledMessageState, options?: { persist?: boolean }) {
-  state = nextState;
   if (options?.persist !== false) {
     writePersistedState(nextState);
   }
+  state = nextState;
   notifyListeners();
 }
 
@@ -146,7 +165,11 @@ function ensureHydrated() {
   }
   hydrated = true;
   state = hydrateScheduledMessageState(readPersistedState());
-  writePersistedState(state);
+  try {
+    writePersistedState(state);
+  } catch (error) {
+    console.error("Could not normalize persisted scheduled messages.", error);
+  }
 }
 
 function ensureStorageListener() {
@@ -230,6 +253,8 @@ export function scheduleThreadMessage(input: ScheduleThreadMessageInput): Schedu
     threadId: input.threadId,
     text: input.text,
     outgoingText: input.outgoingText,
+    attachments: [...(input.attachments ?? [])],
+    summary: input.summary,
     titleSeed: input.titleSeed,
     modelSelection: input.modelSelection,
     runtimeMode: input.runtimeMode,

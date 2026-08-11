@@ -9,14 +9,121 @@ import {
   TurnId,
   type OrchestrationThread,
   type OrchestrationThreadActivity,
+  type UserInputQuestion,
 } from "@t3tools/contracts";
 
 import {
+  buildPendingUserInputAnswers,
   buildThreadFeed,
   deriveThreadFeedPresentation,
+  resolvePendingUserInputAnswer,
+  setPendingUserInputCustomAnswer,
+  togglePendingUserInputOptionSelection,
+  updatePendingUserInputDraftOption,
   type ThreadFeedActivity,
   type ThreadFeedEntry,
 } from "./threadActivity";
+
+const multiSelectQuestion: UserInputQuestion = {
+  id: "services",
+  header: "Services",
+  question: "Which services should be enabled?",
+  options: [
+    { label: "API", description: "Enable the API" },
+    { label: "Worker", description: "Enable the worker" },
+    { label: "Web", description: "Enable the web app" },
+  ],
+  multiSelect: true,
+};
+
+const singleSelectQuestion: UserInputQuestion = {
+  id: "region",
+  header: "Region",
+  question: "Which region?",
+  options: [
+    { label: "EU", description: "Europe" },
+    { label: "US", description: "United States" },
+  ],
+  multiSelect: false,
+};
+
+describe("pending user input answers", () => {
+  it("toggles multiple selections without replacing earlier choices", () => {
+    const apiSelected = togglePendingUserInputOptionSelection(
+      multiSelectQuestion,
+      undefined,
+      "API",
+    );
+    const workerSelected = togglePendingUserInputOptionSelection(
+      multiSelectQuestion,
+      apiSelected,
+      "Worker",
+    );
+
+    expect(workerSelected.selectedOptionLabels).toEqual(["API", "Worker"]);
+    expect(resolvePendingUserInputAnswer(multiSelectQuestion, workerSelected)).toEqual([
+      "API",
+      "Worker",
+    ]);
+  });
+
+  it("deselects one option while preserving the remaining selection", () => {
+    const draft = { selectedOptionLabels: ["API", "Worker"] };
+    expect(togglePendingUserInputOptionSelection(multiSelectQuestion, draft, "API")).toEqual({
+      customAnswer: "",
+      selectedOptionLabels: ["Worker"],
+    });
+  });
+
+  it("keeps single-select replacement behavior", () => {
+    const first = togglePendingUserInputOptionSelection(singleSelectQuestion, undefined, "EU");
+    const second = togglePendingUserInputOptionSelection(singleSelectQuestion, first, "US");
+    expect(second.selectedOptionLabels).toEqual(["US"]);
+    expect(resolvePendingUserInputAnswer(singleSelectQuestion, second)).toBe("US");
+  });
+
+  it("serializes multi-select arrays only after every question is answered", () => {
+    const partial = {
+      services: { selectedOptionLabels: ["API", "Worker"] },
+    };
+    expect(buildPendingUserInputAnswers([multiSelectQuestion, singleSelectQuestion], partial)).toBe(
+      null,
+    );
+
+    expect(
+      buildPendingUserInputAnswers([multiSelectQuestion, singleSelectQuestion], {
+        ...partial,
+        region: { selectedOptionLabels: ["EU"] },
+      }),
+    ).toEqual({ services: ["API", "Worker"], region: "EU" });
+  });
+
+  it("keeps option presses as draft-only state until the full answer map is built", () => {
+    let drafts = updatePendingUserInputDraftOption({}, multiSelectQuestion, "API");
+    drafts = updatePendingUserInputDraftOption(drafts, multiSelectQuestion, "Worker");
+
+    expect(drafts.services?.selectedOptionLabels).toEqual(["API", "Worker"]);
+    expect(buildPendingUserInputAnswers([multiSelectQuestion, singleSelectQuestion], drafts)).toBe(
+      null,
+    );
+
+    drafts = updatePendingUserInputDraftOption(drafts, multiSelectQuestion, "API");
+    drafts = updatePendingUserInputDraftOption(drafts, singleSelectQuestion, "EU");
+
+    expect(
+      buildPendingUserInputAnswers([multiSelectQuestion, singleSelectQuestion], drafts),
+    ).toEqual({ services: ["Worker"], region: "EU" });
+  });
+
+  it("lets a custom answer override selections and requires a new choice when cleared", () => {
+    const selected = { selectedOptionLabels: ["API", "Worker"] };
+    const custom = setPendingUserInputCustomAnswer(selected, "Use the default stack");
+    expect(resolvePendingUserInputAnswer(multiSelectQuestion, custom)).toBe(
+      "Use the default stack",
+    );
+    expect(setPendingUserInputCustomAnswer(custom, "")).toEqual({ customAnswer: "" });
+  });
+});
 
 function makeActivity(
   input: Partial<OrchestrationThreadActivity> &
@@ -530,5 +637,41 @@ describe("buildThreadFeed", () => {
       type: "work-toggle",
       expanded: true,
     });
+  });
+});
+
+describe("quiet timeline: nested agents", () => {
+  it("keeps a nested agent's terminal row but hides its background work", () => {
+    const thread = makeThread({
+      id: ThreadId.make("thread-nested"),
+      projectId: ProjectId.make("project-1"),
+      title: "Nested agents",
+      activities: [
+        // A subagent's own shell: internal, covered by the owner's liveness.
+        makeActivity({
+          id: EventId.make("shell-done"),
+          kind: "task.completed",
+          summary: "Task completed",
+          createdAt: "2026-04-01T00:00:02.000Z",
+          payload: { taskId: "sh-1", agentId: "owner", agentKind: "background" },
+        }),
+        // A nested AGENT's completion: mobile has no Agents sheet, so this
+        // terminal row is the only signal it ever finished.
+        makeActivity({
+          id: EventId.make("nested-done"),
+          kind: "task.completed",
+          summary: "Task completed",
+          createdAt: "2026-04-01T00:00:03.000Z",
+          payload: { taskId: "n-1", agentId: "owner", agentKind: "agent" },
+        }),
+      ],
+    });
+
+    const feed = buildThreadFeed(thread);
+    const ids = feed.flatMap((entry) =>
+      entry.type === "activity-group" ? entry.activities.map((row) => row.id) : [],
+    );
+    expect(ids).toContain("nested-done");
+    expect(ids).not.toContain("shell-done");
   });
 });

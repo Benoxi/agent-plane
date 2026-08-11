@@ -6,7 +6,7 @@ import {
   ThreadId,
   TurnId,
 } from "@t3tools/contracts";
-import { describe, expect, it } from "vite-plus/test";
+import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
 import type { Thread, ThreadShell } from "../types";
 import {
@@ -16,25 +16,107 @@ import {
   buildExpiredTerminalContextToastCopy,
   buildLoadingThreadFromShell,
   buildThreadTurnInterruptInput,
+  cancelComposerVoiceDictation,
   createLocalDispatchSnapshot,
   deriveComposerSendState,
   dismissBranchMismatchForSession,
+  ENVIRONMENT_RECONNECT_WARNING_GRACE_MS,
   getStartedThreadModelChangeBlockReason,
+  hasEnvironmentReconnectWarningGraceElapsed,
   hasServerAcknowledgedLocalDispatch,
+  isComposerPayloadSnapshotCurrent,
   isBranchMismatchDismissedForSession,
   reconcileMountedTerminalThreadIds,
   reconcileRetainedMountedThreadIds,
   resolveThreadMetadataUpdateForNextTurn,
   resolveSendEnvMode,
+  scheduleEnvironmentReconnectWarning,
   startNewThreadForProject,
   shouldShowBranchMismatchBanner,
   shouldWriteThreadErrorToCurrentServerThread,
 } from "./ChatView.logic";
 
+describe("cancelComposerVoiceDictation", () => {
+  it("uses the imperative composer boundary for parent-driven draft advances", () => {
+    const cancelVoiceDictation = vi.fn();
+
+    cancelComposerVoiceDictation({ cancelVoiceDictation });
+    cancelComposerVoiceDictation(null);
+
+    expect(cancelVoiceDictation).toHaveBeenCalledOnce();
+  });
+});
+
 const environmentId = EnvironmentId.make("environment-local");
 const projectId = ProjectId.make("project-1");
 const threadId = ThreadId.make("thread-1");
 const now = "2026-03-29T00:00:00.000Z";
+
+describe("isComposerPayloadSnapshotCurrent", () => {
+  it("only clears a scheduled snapshot when the composer stayed unchanged", () => {
+    const snapshot = {
+      snapshotPrompt: "Review this",
+      snapshotItemIds: [["image-1"], ["terminal-1"], [], [], []],
+    };
+    expect(
+      isComposerPayloadSnapshotCurrent({
+        ...snapshot,
+        currentPrompt: "Review this",
+        currentItemIds: [["image-1"], ["terminal-1"], [], [], []],
+      }),
+    ).toBe(true);
+    expect(
+      isComposerPayloadSnapshotCurrent({
+        ...snapshot,
+        currentPrompt: "Review this and the new edit",
+        currentItemIds: [["image-1"], ["terminal-1"], [], [], []],
+      }),
+    ).toBe(false);
+    expect(
+      isComposerPayloadSnapshotCurrent({
+        ...snapshot,
+        currentPrompt: "Review this",
+        currentItemIds: [["image-1", "image-2"], ["terminal-1"], [], [], []],
+      }),
+    ).toBe(false);
+  });
+});
+
+describe("environment reconnect warning grace", () => {
+  afterEach(() => vi.useRealTimers());
+
+  it("shows a persistent reconnect after the grace period", () => {
+    vi.useFakeTimers();
+    const showWarning = vi.fn();
+
+    scheduleEnvironmentReconnectWarning(showWarning);
+    vi.advanceTimersByTime(ENVIRONMENT_RECONNECT_WARNING_GRACE_MS - 1);
+    expect(showWarning).not.toHaveBeenCalled();
+
+    vi.advanceTimersByTime(1);
+    expect(showWarning).toHaveBeenCalledOnce();
+  });
+
+  it("cancels the warning when the connection recovers during the grace period", () => {
+    vi.useFakeTimers();
+    const showWarning = vi.fn();
+
+    const cancel = scheduleEnvironmentReconnectWarning(showWarning);
+    cancel();
+    vi.advanceTimersByTime(ENVIRONMENT_RECONNECT_WARNING_GRACE_MS);
+
+    expect(showWarning).not.toHaveBeenCalled();
+  });
+
+  it("does not reuse elapsed grace from another environment", () => {
+    const anotherEnvironmentId = EnvironmentId.make("environment-remote");
+
+    expect(hasEnvironmentReconnectWarningGraceElapsed(environmentId, environmentId)).toBe(true);
+    expect(hasEnvironmentReconnectWarningGraceElapsed(anotherEnvironmentId, environmentId)).toBe(
+      false,
+    );
+  });
+});
 
 function makeThread(overrides: Partial<Thread> = {}): Thread {
   return {

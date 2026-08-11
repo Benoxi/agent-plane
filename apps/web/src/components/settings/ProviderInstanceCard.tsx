@@ -35,7 +35,6 @@ import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { ScrollArea } from "../ui/scroll-area";
 import { Switch } from "../ui/switch";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../ui/table";
-import { stackedThreadToast, toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import type { DriverOption } from "./providerDriverMeta";
 import { ProviderSettingsForm } from "./ProviderSettingsForm";
@@ -417,22 +416,7 @@ export function ProviderInstanceCard({
     instance.displayName?.trim() || driverOption?.label || String(instance.driver);
   const accentColor = normalizeProviderAccentColor(instance.accentColor);
   const { copyToClipboard } = useCopyToClipboard<{ providerName: string }>({
-    onCopy: ({ providerName }) => {
-      toastManager.add({
-        type: "success",
-        title: `${providerName} update command copied`,
-        description: "Run it in a terminal when you are ready to update.",
-      });
-    },
-    onError: (error, { providerName }) => {
-      toastManager.add(
-        stackedThreadToast({
-          type: "error",
-          title: `Could not copy ${providerName} update command`,
-          description: error.message,
-        }),
-      );
-    },
+    target: "update command",
   });
 
   // Narrow `instance.driver` for callers that key on the closed
@@ -619,7 +603,7 @@ export function ProviderInstanceCard({
                           "size-5 rounded-sm p-0",
                           versionAdvisory.emphasis === "strong"
                             ? "text-warning hover:text-warning"
-                            : "text-primary hover:text-primary",
+                            : "text-update-foreground hover:text-update-foreground",
                         )}
                         aria-label="Update available — view details"
                       >

@@ -3,8 +3,10 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   clampCollapsedComposerCursor,
   collapseExpandedComposerCursor,
+  deriveCollapsedComposerPrimaryAction,
   detectComposerTrigger,
   expandCollapsedComposerCursor,
+  insertFencedCodeBlock,
   isCollapsedCursorAdjacentToInlineToken,
   parseStandaloneComposerSlashCommand,
   replaceTextRange,
@@ -23,6 +25,78 @@ describe("shouldSubmitComposerOnEnter", () => {
 
   it("inserts a newline for Shift+Enter", () => {
     expect(shouldSubmitComposerOnEnter({ isMobileViewport: false, shiftKey: true })).toBe(false);
+  });
+});
+
+describe("insertFencedCodeBlock", () => {
+  it("inserts an empty fenced block and places the cursor on its blank line", () => {
+    expect(insertFencedCodeBlock("", 0, 0)).toEqual({
+      value: "```\n\n```",
+      selectionStart: 4,
+      selectionEnd: 4,
+    });
+  });
+
+  it("wraps selected text and keeps it selected inside the fences", () => {
+    expect(insertFencedCodeBlock("Run npm test now", 4, 12)).toEqual({
+      value: "Run \n```\nnpm test\n```\n now",
+      selectionStart: 9,
+      selectionEnd: 17,
+    });
+  });
+
+  it("inserts at the cursor without losing a multiline draft", () => {
+    expect(insertFencedCodeBlock("Before\nAfter", 7, 7)).toEqual({
+      value: "Before\n```\n\n```\nAfter",
+      selectionStart: 11,
+      selectionEnd: 11,
+    });
+  });
+
+  it("normalizes reversed and out-of-bounds selections", () => {
+    expect(insertFencedCodeBlock("code", 99, -5)).toEqual({
+      value: "```\ncode\n```",
+      selectionStart: 4,
+      selectionEnd: 8,
+    });
+  });
+});
+
+describe("deriveCollapsedComposerPrimaryAction", () => {
+  const idleInput = {
+    isRunning: false,
+    isSendBusy: false,
+    isConnecting: false,
+    projectSelectionRequired: false,
+    environmentUnavailable: false,
+    hasSendableContent: true,
+  };
+
+  it("shows an enabled send action for sendable idle content", () => {
+    expect(deriveCollapsedComposerPrimaryAction(idleInput)).toEqual({
+      kind: "send",
+      label: "Send message",
+      disabled: false,
+    });
+  });
+
+  it("shows an enabled stop action while generation is running", () => {
+    expect(
+      deriveCollapsedComposerPrimaryAction({
+        ...idleInput,
+        isRunning: true,
+        hasSendableContent: false,
+      }),
+    ).toEqual({ kind: "stop", label: "Stop generation", disabled: false });
+  });
+
+  it("keeps idle send guards", () => {
+    expect(
+      deriveCollapsedComposerPrimaryAction({ ...idleInput, isConnecting: true }),
+    ).toMatchObject({ kind: "send", disabled: true });
+    expect(
+      deriveCollapsedComposerPrimaryAction({ ...idleInput, hasSendableContent: false }),
+    ).toMatchObject({ kind: "send", disabled: true });
   });
 });
 

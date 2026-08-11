@@ -33,22 +33,22 @@ export function copyTextWithHaptic(
     readonly target?: string;
     readonly feedback?: "light-impact" | "selection";
   } = {},
-): void {
+): Promise<boolean> {
   const target = options.target ?? "text";
   const feedback = options.feedback ?? "light-impact";
 
-  void (async () => {
-    try {
-      await Clipboard.setStringAsync(value);
-    } catch (cause) {
+  const clipboardWrite = Clipboard.setStringAsync(value).then(
+    () => true,
+    (cause) => {
       console.error(
         new CopyTextClipboardWriteError({
           target,
           cause,
         }),
       );
-    }
-  })();
+      return false;
+    },
+  );
 
   void (async () => {
     try {
@@ -67,4 +67,6 @@ export function copyTextWithHaptic(
       );
     }
   })();
+
+  return clipboardWrite;
 }

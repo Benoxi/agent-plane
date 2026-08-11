@@ -4,6 +4,7 @@ import {
   workEntryIndicatesToolNeutralStatus,
   workLogEntryIsToolLike,
   type TimelineEntry,
+  type TurnPlanEntry,
   type WorkLogEntry,
 } from "../../session-logic";
 import { type ChatMessage, type ProposedPlan, type TurnDiffSummary } from "../../types";
@@ -18,11 +19,97 @@ export const TIMELINE_MINIMAP_PERSISTENT_GUTTER = 48;
 
 export interface TimelineEndState {
   readonly isAtEnd?: boolean;
-  readonly isNearEnd?: boolean;
+  readonly contentLength?: number;
+  readonly scroll?: number;
+  readonly scrollLength?: number;
 }
 
-export function resolveTimelineIsAtEnd(state: TimelineEndState | undefined): boolean | undefined {
-  return state?.isNearEnd ?? state?.isAtEnd;
+/**
+ * Follow re-arm band above the hard bottom. Strict on purpose: LegendList's
+ * isNearEnd fires within half a viewport, which re-armed live-follow while the
+ * user was reading history and yanked them back down on the next stream chunk.
+ * Re-arm only at the exact content bottom. Even a small tolerance can resume
+ * live-follow while the user is reading the last few lines of history.
+ */
+export const TIMELINE_FOLLOW_REARM_THRESHOLD_PX = 0;
+export const TIMELINE_JUMP_TIMEOUT_MS = 1_500;
+
+export function resolveTimelineIsAtEnd(
+  state: TimelineEndState | undefined,
+  endInset = 0,
+): boolean | undefined {
+  if (!state) {
+    return undefined;
+  }
+  if (state.isAtEnd) {
+    return true;
+  }
+  const { contentLength, scroll, scrollLength } = state;
+  if (contentLength === undefined || scroll === undefined || scrollLength === undefined) {
+    return state.isAtEnd;
+  }
+  // contentLength includes the end inset (composer overlay), so subtract it to
+  // measure the distance to the real content bottom.
+  return contentLength - scroll - scrollLength - endInset <= TIMELINE_FOLLOW_REARM_THRESHOLD_PX;
+}
+
+export interface TimelineJumpContext {
+  readonly threadKey: string | null;
+  readonly userScrollGeneration: number;
+}
+
+export type TimelineJumpResult = "confirmed" | "restore" | "stale";
+
+interface TimelineJumpToken extends TimelineJumpContext {
+  readonly operationId: number;
+}
+
+/** Confirms imperative jumps before allowing the UI to remain in live-follow mode. */
+export class TimelineJumpController {
+  #nextOperationId = 1;
+  #activeToken: TimelineJumpToken | null = null;
+
+  begin(context: TimelineJumpContext): TimelineJumpToken {
+    const token = { ...context, operationId: this.#nextOperationId++ };
+    this.#activeToken = token;
+    return token;
+  }
+
+  cancel(): void {
+    this.#activeToken = null;
+  }
+
+  async awaitCompletion(input: {
+    readonly token: TimelineJumpToken;
+    readonly completion: Promise<unknown>;
+    readonly getContext: () => TimelineJumpContext;
+    readonly getIsAtEnd: () => boolean | undefined;
+    readonly timeoutMs?: number;
+  }): Promise<TimelineJumpResult> {
+    let timeoutId: ReturnType<typeof setTimeout> | null = null;
+    try {
+      await Promise.race([
+        input.completion.catch(() => undefined),
+        new Promise<void>((resolve) => {
+          timeoutId = setTimeout(resolve, input.timeoutMs ?? TIMELINE_JUMP_TIMEOUT_MS);
+        }),
+      ]);
+    } finally {
+      if (timeoutId !== null) clearTimeout(timeoutId);
+    }
+
+    const context = input.getContext();
+    if (
+      this.#activeToken !== input.token ||
+      context.threadKey !== input.token.threadKey ||
+      context.userScrollGeneration !== input.token.userScrollGeneration
+    ) {
+      return "stale";
+    }
+
+    this.#activeToken = null;
+    return input.getIsAtEnd() === true ? "confirmed" : "restore";
+  }
 }
 
 export function resolveTimelineMinimapHeightStyle(itemCount: number): string {
@@ -174,6 +261,12 @@ export type MessagesTimelineRow =
       id: string;
       createdAt: string;
       proposedPlan: ProposedPlan;
+    }
+  | {
+      kind: "turn-plan";
+      id: string;
+      createdAt: string;
+      turnPlan: TurnPlanEntry;
     }
   | { kind: "working"; id: string; createdAt: string | null };
 
@@ -352,9 +445,16 @@ function deriveTurnFolds(input: {
     }
     const hiddenEntryIds = new Set<string>();
     for (const entry of group.entries) {
-      if (entry.id !== group.terminalEntry?.id) {
-        hiddenEntryIds.add(entry.id);
+      if (entry.id === group.terminalEntry?.id) {
+        continue;
       }
+      // Agent-spawn CTA rows never fold: workflows outlive their launching
+      // turn (dynamic spawns, background execution), and folding the CTA
+      // when the turn settles makes a still-running fleet invisible.
+      if (entry.kind === "work" && entry.entry.agentSpawn !== undefined) {
+        continue;
+      }
+      hiddenEntryIds.add(entry.id);
     }
     if (hiddenEntryIds.size === 0) {
       continue;
@@ -489,9 +589,21 @@ export function deriveMessagesTimelineRows(input: {
         } else {
           const groupId = `work-group:${timelineEntry.id}`;
           const expanded = input.expandedWorkGroupIds?.has(groupId) ?? false;
-          const hiddenEntries = visibleGroupedEntries.slice(0, -MAX_VISIBLE_WORK_LOG_ENTRIES);
-          const visibleEntries = visibleGroupedEntries.slice(-MAX_VISIBLE_WORK_LOG_ENTRIES);
-          const renderedEntries = expanded ? [...hiddenEntries, ...visibleEntries] : visibleEntries;
+          // Agent-spawn CTA rows are always visible: a running fleet must
+          // never hide behind a "+N tool calls" toggle. Selection is by
+          // membership (spawn OR recent-tail), preserving the group's
+          // chronological order in both collapsed and expanded states
+          // (review finding: concatenating two filtered lists moved a
+          // mid-group spawn row above earlier tool rows).
+          const overflowCandidates = visibleGroupedEntries.filter(
+            (entry) => entry.agentSpawn === undefined,
+          );
+          const hiddenEntries = overflowCandidates.slice(0, -MAX_VISIBLE_WORK_LOG_ENTRIES);
+          const hiddenIds = new Set(hiddenEntries.map((entry) => entry.id));
+          const visibleEntries = visibleGroupedEntries.filter(
+            (entry) => entry.agentSpawn !== undefined || !hiddenIds.has(entry.id),
+          );
+          const renderedEntries = expanded ? visibleGroupedEntries : visibleEntries;
 
           for (const workEntry of renderedEntries) {
             nextRows.push({
@@ -502,15 +614,19 @@ export function deriveMessagesTimelineRows(input: {
             });
           }
 
-          nextRows.push({
-            kind: "work-toggle",
-            id: `work-toggle:${timelineEntry.id}`,
-            createdAt: timelineEntry.createdAt,
-            groupId,
-            hiddenCount: hiddenEntries.length,
-            expanded,
-            onlyToolEntries: visibleGroupedEntries.every((entry) => workLogEntryIsToolLike(entry)),
-          });
+          if (hiddenEntries.length > 0) {
+            nextRows.push({
+              kind: "work-toggle",
+              id: `work-toggle:${timelineEntry.id}`,
+              createdAt: timelineEntry.createdAt,
+              groupId,
+              hiddenCount: hiddenEntries.length,
+              expanded,
+              onlyToolEntries: visibleGroupedEntries.every((entry) =>
+                workLogEntryIsToolLike(entry),
+              ),
+            });
+          }
         }
       }
       index = cursor - 1;
@@ -523,6 +639,16 @@ export function deriveMessagesTimelineRows(input: {
         id: timelineEntry.id,
         createdAt: timelineEntry.createdAt,
         proposedPlan: timelineEntry.proposedPlan,
+      });
+      continue;
+    }
+
+    if (timelineEntry.kind === "turn-plan") {
+      nextRows.push({
+        kind: "turn-plan",
+        id: timelineEntry.id,
+        createdAt: timelineEntry.createdAt,
+        turnPlan: timelineEntry.turnPlan,
       });
       continue;
     }
@@ -609,6 +735,13 @@ function isRowUnchanged(a: MessagesTimelineRow, b: MessagesTimelineRow): boolean
 
     case "proposed-plan":
       return a.proposedPlan === (b as typeof a).proposedPlan;
+
+    case "turn-plan": {
+      const bp = b as typeof a;
+      // Plans rewrite in place: compare the snapshot's identity fields so an
+      // unchanged plan keeps its row reference (virtualization stability).
+      return a.createdAt === bp.createdAt && a.turnPlan.plan === bp.turnPlan.plan;
+    }
 
     case "work":
       return Equal.equals(a.groupedEntries, (b as typeof a).groupedEntries);

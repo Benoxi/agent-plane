@@ -25,12 +25,25 @@ import type { DraftThreadEnvMode } from "../composerDraftStore";
 export const LAST_INVOKED_SCRIPT_BY_PROJECT_KEY = "t3code:last-invoked-script-by-project";
 export const MAX_HIDDEN_MOUNTED_TERMINAL_THREADS = 10;
 export const MAX_HIDDEN_MOUNTED_PREVIEW_THREADS = 3;
+export const ENVIRONMENT_RECONNECT_WARNING_GRACE_MS = 2_000;
 
 export const LastInvokedScriptByProjectSchema = Schema.Record(ProjectId, Schema.String);
 
+export function scheduleEnvironmentReconnectWarning(showWarning: () => void): () => void {
+  const timeoutId = globalThis.setTimeout(showWarning, ENVIRONMENT_RECONNECT_WARNING_GRACE_MS);
+  return () => globalThis.clearTimeout(timeoutId);
+}
+
+export function hasEnvironmentReconnectWarningGraceElapsed(
+  activeEnvironmentId: EnvironmentId | null,
+  elapsedEnvironmentId: EnvironmentId | null,
+): boolean {
+  return activeEnvironmentId !== null && activeEnvironmentId === elapsedEnvironmentId;
+}
+
 export function startNewThreadForProject(
   projectRef: ScopedProjectRef | null,
-  handleNewThread: (projectRef: ScopedProjectRef) => Promise<void>,
+  handleNewThread: (projectRef: ScopedProjectRef) => Promise<unknown>,
 ): boolean {
   if (projectRef === null) return false;
   void handleNewThread(projectRef);
@@ -563,4 +576,28 @@ export function hasServerAcknowledgedLocalDispatch(input: {
     input.localDispatch.sessionStatus !== (session?.status ?? null) ||
     input.localDispatch.sessionUpdatedAt !== (session?.updatedAt ?? null)
   );
+}
+
+export function isComposerPayloadSnapshotCurrent(input: {
+  snapshotPrompt: string;
+  currentPrompt: string;
+  snapshotItemIds: ReadonlyArray<ReadonlyArray<string>>;
+  currentItemIds: ReadonlyArray<ReadonlyArray<string>>;
+}): boolean {
+  if (input.snapshotPrompt !== input.currentPrompt) return false;
+  if (input.snapshotItemIds.length !== input.currentItemIds.length) return false;
+  return input.snapshotItemIds.every((snapshotIds, groupIndex) => {
+    const currentIds = input.currentItemIds[groupIndex];
+    return (
+      currentIds !== undefined &&
+      snapshotIds.length === currentIds.length &&
+      snapshotIds.every((id, itemIndex) => id === currentIds[itemIndex])
+    );
+  });
+}
+
+export function cancelComposerVoiceDictation(
+  composer: { cancelVoiceDictation: () => void } | null,
+): void {
+  composer?.cancelVoiceDictation();
 }

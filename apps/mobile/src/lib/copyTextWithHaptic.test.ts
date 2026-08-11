@@ -54,6 +54,20 @@ describe("copyTextWithHaptic", () => {
     expect(mocks.impactAsync).not.toHaveBeenCalled();
   });
 
+  it("reports whether the clipboard write succeeded", async () => {
+    mocks.setStringAsync.mockResolvedValueOnce(undefined);
+
+    await expect(copyTextWithHaptic("message", { target: "message" })).resolves.toBe(true);
+  });
+
+  it("returns false when the clipboard write fails", async () => {
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    mocks.setStringAsync.mockRejectedValueOnce(new Error("clipboard denied"));
+
+    await expect(copyTextWithHaptic("message", { target: "message" })).resolves.toBe(false);
+    expect(consoleError).toHaveBeenCalledOnce();
+  });
+
   it("reports structured failures without including clipboard contents", async () => {
     const clipboardCause = new Error("native clipboard failure");
     const hapticCause = new Error("native haptic failure");

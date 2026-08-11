@@ -40,7 +40,7 @@ function makeThread(overrides: Partial<Thread> = {}): Thread {
 }
 
 describe("sortThreads", () => {
-  it("sorts threads by their latest meaningful update in recency mode", () => {
+  it("sorts threads by their latest user message in recency mode", () => {
     const sorted = sortThreads(
       [
         makeThread({
@@ -79,17 +79,18 @@ describe("sortThreads", () => {
     );
 
     expect(sorted.map((thread) => thread.id)).toEqual([
-      ThreadId.make("thread-1"),
       ThreadId.make("thread-2"),
+      ThreadId.make("thread-1"),
     ]);
   });
 
-  it("falls back to thread timestamps when there is no user message", () => {
+  it("falls back to stable creation time when there is no user message", () => {
     const sorted = sortThreads(
       [
         makeThread({
           id: ThreadId.make("thread-1"),
-          updatedAt: "2026-03-09T10:01:00.000Z",
+          createdAt: "2026-03-09T10:00:00.000Z",
+          updatedAt: "2026-03-09T10:30:00.000Z",
           messages: [
             {
               id: "message-1" as never,
@@ -118,7 +119,7 @@ describe("sortThreads", () => {
     ]);
   });
 
-  it("falls back to createdAt when updatedAt is invalid", () => {
+  it("ignores updatedAt when threads have no user messages", () => {
     const sorted = sortThreads(
       [
         makeThread({
@@ -130,7 +131,7 @@ describe("sortThreads", () => {
         makeThread({
           id: ThreadId.make("thread-2"),
           createdAt: "2026-03-09T09:00:00.000Z",
-          updatedAt: "2026-03-09T09:30:00.000Z",
+          updatedAt: "2026-03-09T11:30:00.000Z",
           messages: [],
         }),
       ],

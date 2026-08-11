@@ -55,15 +55,6 @@ export const ProposedPlanCard = memo(function ProposedPlanCard({
   });
   const { copyToClipboard, isCopied } = useCopyToClipboard({
     target: "plan",
-    onError: (error) => {
-      toastManager.add(
-        stackedThreadToast({
-          type: "error",
-          title: "Could not copy plan",
-          description: error instanceof Error ? error.message : "An error occurred while copying.",
-        }),
-      );
-    },
   });
   const savePathInputId = useId();
   const title = proposedPlanTitle(planMarkdown) ?? "Proposed plan";

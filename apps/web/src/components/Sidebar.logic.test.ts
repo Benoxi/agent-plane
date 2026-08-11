@@ -17,7 +17,7 @@ import {
   resolveProjectStatusIndicator,
   resolveSidebarStageBadgeLabel,
   resolveThreadRowClassName,
-  resolveSidebarV2Status,
+  resolveSidebarThreadStatus,
   resolveThreadStatusPill,
   resolveWorkingStartedAt,
   searchSidebarThreadsByTitle,
@@ -25,8 +25,11 @@ import {
   shouldNavigateAfterProjectRemoval,
   shouldClearThreadSelectionOnMouseDown,
   sortLogicalProjectsForSidebar,
-  sortSettledThreadsForSidebarV2,
-  sortThreadsForSidebarV2,
+  sortSettledThreadsForSidebar,
+  pinOrderKeyBetween,
+  planPinnedReorder,
+  sortPinnedThreadsForSidebar,
+  sortThreadsForSidebar,
   sortProjectsForSidebar,
   sortScopedProjectsForSidebar,
   THREAD_JUMP_HINT_SHOW_DELAY_MS,
@@ -450,6 +453,24 @@ describe("orderItemsByPreferredIds", () => {
     ]);
   });
 
+  it("keeps a captured menu order while using the latest item values", () => {
+    const ordered = orderItemsByPreferredIds({
+      items: [
+        { id: "workspace-b", label: "Renamed B" },
+        { id: "workspace-a", label: "Renamed A" },
+        { id: "workspace-c", label: "New C" },
+      ],
+      preferredIds: ["workspace-a", "workspace-b"],
+      getId: (workspace) => workspace.id,
+    });
+
+    expect(ordered).toEqual([
+      { id: "workspace-a", label: "Renamed A" },
+      { id: "workspace-b", label: "Renamed B" },
+      { id: "workspace-c", label: "New C" },
+    ]);
+  });
+
   it("honors projectOrder physical keys via getProjectOrderKey", async () => {
     // Regression guard for #1904 / the regression introduced by #2055:
     // `projectOrder` is populated with physical keys (envId + cwd-derived)
@@ -624,7 +645,7 @@ describe("isContextMenuPointerDown", () => {
   });
 });
 
-describe("resolveSidebarV2Status", () => {
+describe("resolveSidebarThreadStatus", () => {
   const session = {
     threadId: ThreadId.make("thread-1"),
     status: "running" as const,
@@ -639,15 +660,17 @@ describe("resolveSidebarV2Status", () => {
   const idle = { hasPendingApprovals: false, hasPendingUserInput: false };
 
   it("prioritizes approval over a running session", () => {
-    expect(resolveSidebarV2Status({ ...idle, hasPendingApprovals: true, session })).toBe(
+    expect(resolveSidebarThreadStatus({ ...idle, hasPendingApprovals: true, session })).toBe(
       "approval",
     );
   });
 
   it("prioritizes awaiting input over a running session, below approval", () => {
-    expect(resolveSidebarV2Status({ ...idle, hasPendingUserInput: true, session })).toBe("input");
+    expect(resolveSidebarThreadStatus({ ...idle, hasPendingUserInput: true, session })).toBe(
+      "input",
+    );
     expect(
-      resolveSidebarV2Status({
+      resolveSidebarThreadStatus({
         ...idle,
         hasPendingApprovals: true,
         hasPendingUserInput: true,
@@ -657,9 +680,9 @@ describe("resolveSidebarV2Status", () => {
   });
 
   it("reports working for running and starting sessions", () => {
-    expect(resolveSidebarV2Status({ ...idle, session })).toBe("working");
+    expect(resolveSidebarThreadStatus({ ...idle, session })).toBe("working");
     expect(
-      resolveSidebarV2Status({
+      resolveSidebarThreadStatus({
         ...idle,
         session: { ...session, status: "starting" as const },
       }),
@@ -668,19 +691,19 @@ describe("resolveSidebarV2Status", () => {
 
   it("reports failed only while the session status is error", () => {
     expect(
-      resolveSidebarV2Status({
+      resolveSidebarThreadStatus({
         ...idle,
         session: { ...session, status: "error" as const, lastError: "boom" },
       }),
     ).toBe("failed");
     expect(
-      resolveSidebarV2Status({
+      resolveSidebarThreadStatus({
         ...idle,
         session: { ...session, status: "stopped" as const, lastError: "persisted" },
       }),
     ).toBe("ready");
     expect(
-      resolveSidebarV2Status({
+      resolveSidebarThreadStatus({
         ...idle,
         session: { ...session, status: "ready" as const, lastError: "persisted" },
       }),
@@ -688,7 +711,7 @@ describe("resolveSidebarV2Status", () => {
   });
 
   it("defaults to ready with no session", () => {
-    expect(resolveSidebarV2Status({ ...idle, session: null })).toBe("ready");
+    expect(resolveSidebarThreadStatus({ ...idle, session: null })).toBe("ready");
   });
 });
 
@@ -712,37 +735,45 @@ describe("searchSidebarThreadsByTitle", () => {
   });
 });
 
-describe("sortThreadsForSidebarV2", () => {
-  const sortable = (input: { id: string; createdAt: string; updatedAt?: string }) => ({
+describe("sortThreadsForSidebar", () => {
+  const sortable = (input: {
+    id: string;
+    createdAt: string;
+    updatedAt?: string;
+    latestUserMessageAt?: string | null;
+  }) => ({
     id: input.id,
     createdAt: input.createdAt,
     updatedAt: input.updatedAt ?? input.createdAt,
+    latestUserMessageAt: input.latestUserMessageAt ?? null,
   });
 
-  it("orders by the latest meaningful update, not creation time", () => {
-    const sorted = sortThreadsForSidebarV2([
+  it("orders by latest user activity without reacting to assistant or metadata updates", () => {
+    const sorted = sortThreadsForSidebar([
       sortable({
-        id: "updated-after-assistant-output",
+        id: "updated-after-assistant-output-and-rename",
         createdAt: "2026-03-09T08:00:00.000Z",
         updatedAt: "2026-03-09T13:00:00.000Z",
+        latestUserMessageAt: "2026-03-09T09:00:00.000Z",
       }),
       sortable({
-        id: "newest-created",
-        createdAt: "2026-03-09T12:00:00.000Z",
-        updatedAt: "2026-03-09T12:00:00.000Z",
+        id: "newest-user-activity",
+        createdAt: "2026-03-09T10:00:00.000Z",
+        updatedAt: "2026-03-09T10:30:00.000Z",
+        latestUserMessageAt: "2026-03-09T10:30:00.000Z",
       }),
-      sortable({ id: "middle", createdAt: "2026-03-09T10:00:00.000Z" }),
+      sortable({ id: "no-user-activity", createdAt: "2026-03-09T09:30:00.000Z" }),
     ]);
 
     expect(sorted.map((thread) => thread.id)).toEqual([
-      "updated-after-assistant-output",
-      "newest-created",
-      "middle",
+      "newest-user-activity",
+      "no-user-activity",
+      "updated-after-assistant-output-and-rename",
     ]);
   });
 
-  it("falls back to creation time and then id so ties are stable", () => {
-    const sorted = sortThreadsForSidebarV2([
+  it("falls back to creation time and then id so missing activity remains stable", () => {
+    const sorted = sortThreadsForSidebar([
       sortable({
         id: "b",
         createdAt: "2026-03-09T10:00:00.000Z",
@@ -759,7 +790,137 @@ describe("sortThreadsForSidebarV2", () => {
   });
 });
 
-describe("sortSettledThreadsForSidebarV2", () => {
+describe("pinOrderKeyBetween", () => {
+  it("produces keys that sort between their bounds", () => {
+    const middle = pinOrderKeyBetween(null, null)!;
+    const top = pinOrderKeyBetween(null, middle)!;
+    const bottom = pinOrderKeyBetween(middle, null)!;
+    expect(top < middle).toBe(true);
+    expect(middle < bottom).toBe(true);
+
+    const between = pinOrderKeyBetween(top, middle)!;
+    expect(top < between && between < middle).toBe(true);
+  });
+
+  it("extends into new digits when bounds are adjacent", () => {
+    const key = pinOrderKeyBetween("g", "h")!;
+    expect("g" < key && key < "h").toBe(true);
+  });
+
+  it("stays strictly ordered under repeated top insertion", () => {
+    // Every new pin lands at the head of the arranged run; keys must keep
+    // sorting before the previous head without ever bottoming out.
+    let head: string | null = null;
+    const keys: string[] = [];
+    for (let i = 0; i < 100; i += 1) {
+      const key: string = pinOrderKeyBetween(null, head)!;
+      expect(key).not.toBeNull();
+      if (head !== null) expect(key < head).toBe(true);
+      keys.push(key);
+      head = key;
+    }
+    expect(new Set(keys).size).toBe(100);
+  });
+
+  it("stays strictly ordered under repeated middle insertion", () => {
+    let low = pinOrderKeyBetween(null, null)!;
+    let high = pinOrderKeyBetween(low, null)!;
+    for (let i = 0; i < 100; i += 1) {
+      const key: string = pinOrderKeyBetween(low, high)!;
+      expect(low < key && key < high).toBe(true);
+      if (i % 2 === 0) low = key;
+      else high = key;
+    }
+  });
+
+  it("returns null for corrupt or out-of-order bounds instead of throwing", () => {
+    expect(pinOrderKeyBetween("z", "a")).toBeNull();
+    expect(pinOrderKeyBetween("A!", null)).toBeNull();
+    expect(pinOrderKeyBetween(null, "ma")).toBeNull();
+    expect(pinOrderKeyBetween("m", "m")).toBeNull();
+  });
+});
+
+describe("planPinnedReorder", () => {
+  it("writes only the moved thread when neighbors are keyed", () => {
+    const assignments = planPinnedReorder({
+      orderedIds: ["a", "c", "b"],
+      keysById: new Map([
+        ["a", "f"],
+        ["b", "m"],
+        ["c", "t"],
+      ]),
+      movedId: "c",
+    });
+    expect(assignments).toHaveLength(1);
+    expect(assignments[0]!.id).toBe("c");
+    expect(assignments[0]!.orderKey > "f" && assignments[0]!.orderKey < "m").toBe(true);
+  });
+
+  it("treats list edges as open bounds", () => {
+    const assignments = planPinnedReorder({
+      orderedIds: ["b", "a"],
+      keysById: new Map([
+        ["a", "m"],
+        ["b", null],
+      ]),
+      movedId: "b",
+    });
+    expect(assignments).toHaveLength(1);
+    expect(assignments[0]!.orderKey < "m").toBe(true);
+  });
+
+  it("materializes keys for the whole section when a neighbor is keyless", () => {
+    const assignments = planPinnedReorder({
+      orderedIds: ["b", "a", "c"],
+      keysById: new Map([
+        ["a", null],
+        ["b", "m"],
+        ["c", null],
+      ]),
+      movedId: "b",
+    });
+    expect(assignments.map((entry) => entry.id)).toEqual(["b", "a", "c"]);
+    const keys = assignments.map((entry) => entry.orderKey);
+    expect([...keys].sort()).toEqual(keys);
+    expect(new Set(keys).size).toBe(keys.length);
+  });
+});
+
+describe("sortPinnedThreadsForSidebar", () => {
+  const pinnable = (input: { id: string; createdAt: string; pinOrderKey?: string | null }) => ({
+    id: input.id,
+    createdAt: input.createdAt,
+    pinOrderKey: input.pinOrderKey ?? null,
+  });
+
+  it("sorts keyed threads by key ahead of keyless threads in creation order", () => {
+    const sorted = sortPinnedThreadsForSidebar([
+      pinnable({ id: "keyless-old", createdAt: "2026-03-09T08:00:00.000Z" }),
+      pinnable({ id: "second", createdAt: "2026-03-09T09:00:00.000Z", pinOrderKey: "t" }),
+      pinnable({ id: "keyless-new", createdAt: "2026-03-09T12:00:00.000Z" }),
+      pinnable({ id: "first", createdAt: "2026-03-09T07:00:00.000Z", pinOrderKey: "g" }),
+    ]);
+
+    expect(sorted.map((thread) => thread.id)).toEqual([
+      "first",
+      "second",
+      "keyless-new",
+      "keyless-old",
+    ]);
+  });
+
+  it("breaks equal keys by id so raced writes render identically everywhere", () => {
+    const sorted = sortPinnedThreadsForSidebar([
+      pinnable({ id: "b", createdAt: "2026-03-09T10:00:00.000Z", pinOrderKey: "m" }),
+      pinnable({ id: "a", createdAt: "2026-03-09T11:00:00.000Z", pinOrderKey: "m" }),
+    ]);
+
+    expect(sorted.map((thread) => thread.id)).toEqual(["a", "b"]);
+  });
+});
+
+describe("sortSettledThreadsForSidebar", () => {
   const settled = (input: {
     id: string;
     settledAt?: string | null;
@@ -775,7 +936,7 @@ describe("sortSettledThreadsForSidebarV2", () => {
   });
 
   it("orders by settle time, most recently settled first", () => {
-    const sorted = sortSettledThreadsForSidebarV2([
+    const sorted = sortSettledThreadsForSidebar([
       settled({
         id: "settled-first",
         settledAt: "2026-03-09T10:00:00.000Z",
@@ -793,7 +954,7 @@ describe("sortSettledThreadsForSidebarV2", () => {
   });
 
   it("falls back to last activity for auto-settled threads without a settledAt stamp", () => {
-    const sorted = sortSettledThreadsForSidebarV2([
+    const sorted = sortSettledThreadsForSidebar([
       settled({ id: "auto-old", latestUserMessageAt: "2026-03-09T08:00:00.000Z" }),
       settled({ id: "explicit", settledAt: "2026-03-09T10:00:00.000Z" }),
       settled({ id: "auto-recent", latestUserMessageAt: "2026-03-09T11:00:00.000Z" }),
@@ -805,7 +966,7 @@ describe("sortSettledThreadsForSidebarV2", () => {
   it("counts a turn completion as activity for auto-settled threads", () => {
     // The message came in before the other thread's, but its turn finished
     // after: completion time is the real "work ended" moment.
-    const sorted = sortSettledThreadsForSidebarV2([
+    const sorted = sortSettledThreadsForSidebar([
       settled({ id: "message-only", latestUserMessageAt: "2026-03-09T10:04:00.000Z" }),
       settled({
         id: "completed-later",
@@ -818,7 +979,7 @@ describe("sortSettledThreadsForSidebarV2", () => {
   });
 
   it("breaks timestamp ties by id so the order is stable", () => {
-    const sorted = sortSettledThreadsForSidebarV2([
+    const sorted = sortSettledThreadsForSidebar([
       settled({ id: "b", settledAt: "2026-03-09T10:00:00.000Z" }),
       settled({ id: "a", settledAt: "2026-03-09T10:00:00.000Z" }),
     ]);
@@ -1238,7 +1399,7 @@ describe("getFallbackThreadIdAfterDelete", () => {
   });
 });
 describe("sortProjectsForSidebar", () => {
-  it("sorts projects by the most recent meaningful update across their threads", () => {
+  it("sorts projects by the most recent user activity across their threads", () => {
     const projects = [
       makeProject({ id: ProjectId.make("project-1"), title: "Older project" }),
       makeProject({ id: ProjectId.make("project-2"), title: "Newer project" }),
@@ -1280,23 +1441,25 @@ describe("sortProjectsForSidebar", () => {
     const sorted = sortProjectsForSidebar(projects, threads, "updated_at");
 
     expect(sorted.map((project) => project.id)).toEqual([
-      ProjectId.make("project-1"),
       ProjectId.make("project-2"),
+      ProjectId.make("project-1"),
     ]);
   });
 
-  it("falls back to project timestamps when a project has no threads", () => {
+  it("uses creation time rather than rename-sensitive updates when a project has no threads", () => {
     const sorted = sortProjectsForSidebar(
       [
         makeProject({
           id: ProjectId.make("project-1"),
           title: "Older project",
-          updatedAt: "2026-03-09T10:01:00.000Z",
+          createdAt: "2026-03-09T10:01:00.000Z",
+          updatedAt: "2026-03-09T10:20:00.000Z",
         }),
         makeProject({
           id: ProjectId.make("project-2"),
           title: "Newer project",
-          updatedAt: "2026-03-09T10:05:00.000Z",
+          createdAt: "2026-03-09T10:05:00.000Z",
+          updatedAt: "2026-03-09T10:10:00.000Z",
         }),
       ],
       [],
@@ -1309,20 +1472,16 @@ describe("sortProjectsForSidebar", () => {
     ]);
   });
 
-  it("falls back to name and id ordering when projects have no sortable timestamps", () => {
+  it("uses immutable ids rather than renamed titles to break timestamp ties", () => {
     const sorted = sortProjectsForSidebar(
       [
         makeProject({
           id: ProjectId.make("project-2"),
-          title: "Beta",
-          createdAt: "invalid-created-at" as never,
-          updatedAt: "invalid-updated-at" as never,
+          title: "Alpha after rename",
         }),
         makeProject({
           id: ProjectId.make("project-1"),
-          title: "Alpha",
-          createdAt: "invalid-created-at" as never,
-          updatedAt: "invalid-updated-at" as never,
+          title: "Zulu after rename",
         }),
       ],
       [],
@@ -1364,12 +1523,15 @@ describe("sortProjectsForSidebar", () => {
         }),
       ],
       [
-        makeThread({
-          id: ThreadId.make("thread-visible"),
-          projectId: ProjectId.make("project-1"),
-          updatedAt: "2026-03-09T10:02:00.000Z",
-          archivedAt: null,
-        }),
+        {
+          ...makeThread({
+            id: ThreadId.make("thread-visible"),
+            projectId: ProjectId.make("project-1"),
+            updatedAt: "2026-03-09T10:02:00.000Z",
+            archivedAt: null,
+          }),
+          latestUserMessageAt: "2026-03-09T10:02:00.000Z",
+        },
         makeThread({
           id: ThreadId.make("thread-archived"),
           projectId: ProjectId.make("project-2"),
@@ -1386,14 +1548,17 @@ describe("sortProjectsForSidebar", () => {
     ]);
   });
 
-  it("returns the project timestamp when no threads are present", () => {
+  it("returns the project creation timestamp when no threads are present", () => {
     const timestamp = getProjectSortTimestamp(
-      makeProject({ updatedAt: "2026-03-09T10:10:00.000Z" }),
+      makeProject({
+        createdAt: "2026-03-09T10:05:00.000Z",
+        updatedAt: "2026-03-09T10:10:00.000Z",
+      }),
       [],
       "updated_at",
     );
 
-    expect(timestamp).toBe(Date.parse("2026-03-09T10:10:00.000Z"));
+    expect(timestamp).toBe(Date.parse("2026-03-09T10:05:00.000Z"));
   });
 });
 
@@ -1414,16 +1579,22 @@ describe("sortScopedProjectsForSidebar", () => {
       }),
     ];
     const threads = [
-      makeThread({
-        environmentId: localEnvironmentId,
-        projectId: sharedProjectId,
-        updatedAt: "2026-03-09T10:02:00.000Z",
-      }),
-      makeThread({
-        environmentId: remoteEnvironmentId,
-        projectId: sharedProjectId,
-        updatedAt: "2026-03-09T10:10:00.000Z",
-      }),
+      {
+        ...makeThread({
+          environmentId: localEnvironmentId,
+          projectId: sharedProjectId,
+          updatedAt: "2026-03-09T10:02:00.000Z",
+        }),
+        latestUserMessageAt: "2026-03-09T10:02:00.000Z",
+      },
+      {
+        ...makeThread({
+          environmentId: remoteEnvironmentId,
+          projectId: sharedProjectId,
+          updatedAt: "2026-03-09T10:10:00.000Z",
+        }),
+        latestUserMessageAt: "2026-03-09T10:10:00.000Z",
+      },
     ];
 
     const sorted = sortScopedProjectsForSidebar(projects, threads, "updated_at");
@@ -1445,17 +1616,23 @@ describe("sortScopedProjectsForSidebar", () => {
       }),
     ];
     const threads = [
-      makeThread({
-        id: ThreadId.make("thread-visible"),
-        projectId: ProjectId.make("project-visible"),
-        updatedAt: "2026-03-09T10:02:00.000Z",
-      }),
-      makeThread({
-        id: ThreadId.make("thread-archived"),
-        projectId: ProjectId.make("project-archived"),
-        updatedAt: "2026-03-09T10:10:00.000Z",
-        archivedAt: "2026-03-09T10:11:00.000Z",
-      }),
+      {
+        ...makeThread({
+          id: ThreadId.make("thread-visible"),
+          projectId: ProjectId.make("project-visible"),
+          updatedAt: "2026-03-09T10:02:00.000Z",
+        }),
+        latestUserMessageAt: "2026-03-09T10:02:00.000Z",
+      },
+      {
+        ...makeThread({
+          id: ThreadId.make("thread-archived"),
+          projectId: ProjectId.make("project-archived"),
+          updatedAt: "2026-03-09T10:10:00.000Z",
+          archivedAt: "2026-03-09T10:11:00.000Z",
+        }),
+        latestUserMessageAt: "2026-03-09T10:10:00.000Z",
+      },
     ];
 
     const sorted = sortScopedProjectsForSidebar(projects, threads, "updated_at");
@@ -1484,15 +1661,21 @@ describe("sortLogicalProjectsForSidebar", () => {
       },
     ];
     const threads = [
-      makeThread({
-        projectId: olderProjectId,
-        updatedAt: "2026-03-09T10:01:00.000Z",
-      }),
-      makeThread({
-        id: ThreadId.make("thread-newer"),
-        projectId: newerProjectId,
-        updatedAt: "2026-03-09T10:05:00.000Z",
-      }),
+      {
+        ...makeThread({
+          projectId: olderProjectId,
+          updatedAt: "2026-03-09T10:01:00.000Z",
+        }),
+        latestUserMessageAt: "2026-03-09T10:01:00.000Z",
+      },
+      {
+        ...makeThread({
+          id: ThreadId.make("thread-newer"),
+          projectId: newerProjectId,
+          updatedAt: "2026-03-09T10:05:00.000Z",
+        }),
+        latestUserMessageAt: "2026-03-09T10:05:00.000Z",
+      },
     ];
 
     expect(sortLogicalProjectsForSidebar(projects, threads, "manual")).toEqual(projects);

@@ -1,11 +1,59 @@
-import { describe, expect, it } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
 import {
   computeStableMessagesTimelineRows,
   computeMessageDurationStart,
   deriveMessagesTimelineRows,
   normalizeCompactToolLabel,
   resolveAssistantMessageCopyState,
+  TimelineJumpController,
 } from "./MessagesTimeline.logic";
+
+describe("TimelineJumpController", () => {
+  it("restores failed and timed-out jumps while ignoring stale completion", async () => {
+    let completeScroll!: () => void;
+    const deferredScroll = new Promise<void>((resolve) => {
+      completeScroll = resolve;
+    });
+    const controller = new TimelineJumpController();
+    let context = { threadKey: "thread-1", userScrollGeneration: 0 };
+    const staleToken = controller.begin(context);
+    const staleResult = controller.awaitCompletion({
+      token: staleToken,
+      completion: deferredScroll,
+      getContext: () => context,
+      getIsAtEnd: () => false,
+      timeoutMs: 10_000,
+    });
+
+    context = { ...context, userScrollGeneration: 1 };
+    controller.cancel();
+    completeScroll();
+    await expect(staleResult).resolves.toBe("stale");
+
+    const failedToken = controller.begin(context);
+    await expect(
+      controller.awaitCompletion({
+        token: failedToken,
+        completion: Promise.reject(new Error("scroll failed")),
+        getContext: () => context,
+        getIsAtEnd: () => false,
+      }),
+    ).resolves.toBe("restore");
+
+    vi.useFakeTimers();
+    const timedOutToken = controller.begin(context);
+    const timedOut = controller.awaitCompletion({
+      token: timedOutToken,
+      completion: new Promise(() => undefined),
+      getContext: () => context,
+      getIsAtEnd: () => false,
+      timeoutMs: 25,
+    });
+    await vi.advanceTimersByTimeAsync(25);
+    await expect(timedOut).resolves.toBe("restore");
+    vi.useRealTimers();
+  });
+});
 
 describe("computeMessageDurationStart", () => {
   it("returns message createdAt when there is no preceding user message", () => {

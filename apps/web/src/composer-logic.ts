@@ -11,11 +11,69 @@ export interface ComposerTrigger {
   rangeEnd: number;
 }
 
+export interface FencedCodeBlockInsertion {
+  readonly value: string;
+  readonly selectionStart: number;
+  readonly selectionEnd: number;
+}
+
+export function insertFencedCodeBlock(
+  value: string,
+  selectionStartInput: number,
+  selectionEndInput: number,
+): FencedCodeBlockInsertion {
+  const start = Math.min(
+    clampCursor(value, selectionStartInput),
+    clampCursor(value, selectionEndInput),
+  );
+  const end = Math.max(
+    clampCursor(value, selectionStartInput),
+    clampCursor(value, selectionEndInput),
+  );
+  const selectedText = value.slice(start, end);
+  const leadingNewline = start > 0 && value[start - 1] !== "\n" ? "\n" : "";
+  const trailingNewline = end < value.length && value[end] !== "\n" ? "\n" : "";
+  const openingFence = "```\n";
+  const bodyTrailingNewline = selectedText.endsWith("\n") ? "" : "\n";
+  const replacement = `${leadingNewline}${openingFence}${selectedText}${bodyTrailingNewline}\`\`\`${trailingNewline}`;
+  const selectionStart = start + leadingNewline.length + openingFence.length;
+
+  return {
+    value: `${value.slice(0, start)}${replacement}${value.slice(end)}`,
+    selectionStart,
+    selectionEnd: selectionStart + selectedText.length,
+  };
+}
+
 export function shouldSubmitComposerOnEnter(input: {
   isMobileViewport: boolean;
   shiftKey: boolean;
 }): boolean {
   return !input.isMobileViewport && !input.shiftKey;
+}
+
+export function deriveCollapsedComposerPrimaryAction(input: {
+  isRunning: boolean;
+  isSendBusy: boolean;
+  isConnecting: boolean;
+  projectSelectionRequired: boolean;
+  environmentUnavailable: boolean;
+  hasSendableContent: boolean;
+}): { kind: "send" | "stop"; label: string; disabled: boolean } {
+  if (input.isRunning) {
+    return { kind: "stop", label: "Stop generation", disabled: false };
+  }
+
+  return {
+    kind: "send",
+    label: "Send message",
+    disabled:
+      input.isSendBusy ||
+      input.isConnecting ||
+      input.projectSelectionRequired ||
+      input.environmentUnavailable ||
+      !input.hasSendableContent,
+  };
 }
 
 const isInlineTokenSegment = (

@@ -1,5 +1,12 @@
 export type ComposerSpeechRecognitionConstructor = new () => SpeechRecognition;
 
+export interface ComposerSpeechRecognition {
+  start: () => void;
+  stop: () => void;
+  abort: () => void;
+  dispose: (options?: { abort?: boolean }) => void;
+}
+
 export type SpeechRecognitionSupport =
   | { supported: true; ctor: ComposerSpeechRecognitionConstructor }
   | { supported: false; reason: "missing-api" | "insecure-context" };
@@ -83,17 +90,55 @@ export function collectSpeechRecognitionText(event: SpeechRecognitionEvent): {
   };
 }
 
+export function createSpeechRecognitionTranscriptTracker(): {
+  update: (event: SpeechRecognitionEvent) => { finalText: string; interimText: string };
+} {
+  const finalTextByResultIndex = new Map<number, string>();
+
+  return {
+    update: (event) => {
+      for (const index of finalTextByResultIndex.keys()) {
+        if (index >= event.results.length) {
+          finalTextByResultIndex.delete(index);
+        }
+      }
+
+      const interimChunks: string[] = [];
+      for (let index = 0; index < event.results.length; index += 1) {
+        const result = event.results[index];
+        if (!result) continue;
+        const transcript = result[0]?.transcript?.trim();
+        if (!transcript) {
+          if (index >= event.resultIndex) finalTextByResultIndex.delete(index);
+          continue;
+        }
+        if (result.isFinal) {
+          finalTextByResultIndex.set(index, transcript);
+        } else {
+          finalTextByResultIndex.delete(index);
+          interimChunks.push(transcript);
+        }
+      }
+
+      return {
+        finalText: [...finalTextByResultIndex.entries()]
+          .toSorted(([left], [right]) => left - right)
+          .map(([, transcript]) => transcript)
+          .join(" ")
+          .trim(),
+        interimText: interimChunks.join(" ").trim(),
+      };
+    },
+  };
+}
+
 export function createComposerSpeechRecognition(input: {
   language: string;
   onFinalText: (text: string) => void;
   onInterimText: (text: string) => void;
   onError: (message: string) => void;
   onEnd: () => void;
-}): {
-  start: () => void;
-  stop: () => void;
-  abort: () => void;
-} {
+}): ComposerSpeechRecognition {
   const support = detectSpeechRecognitionSupport();
   if (!support.supported) {
     throw new Error(
@@ -107,25 +152,46 @@ export function createComposerSpeechRecognition(input: {
   recognition.continuous = true;
   recognition.interimResults = true;
   recognition.lang = input.language || "en-US";
-  recognition.addEventListener("result", (event) => {
+  const transcriptTracker = createSpeechRecognitionTranscriptTracker();
+  let disposed = false;
+  const handleResult = (event: Event) => {
+    if (disposed) return;
     const speechEvent = event as SpeechRecognitionEvent;
-    const text = collectSpeechRecognitionText(speechEvent);
+    const text = transcriptTracker.update(speechEvent);
     if (text.finalText) {
       input.onFinalText(text.finalText);
     }
+    if (disposed) return;
     input.onInterimText(text.interimText);
-  });
-  recognition.addEventListener("error", (event) => {
+  };
+  const handleError = (event: Event) => {
+    if (disposed) return;
     const speechEvent = event as SpeechRecognitionErrorEvent;
     input.onError(speechRecognitionErrorMessage(speechEvent.error));
-  });
-  recognition.addEventListener("end", () => {
+  };
+  const handleEnd = () => {
+    if (disposed) return;
     input.onEnd();
-  });
+  };
+  recognition.addEventListener("result", handleResult);
+  recognition.addEventListener("error", handleError);
+  recognition.addEventListener("end", handleEnd);
+
+  const dispose = (options?: { abort?: boolean }) => {
+    if (disposed) return;
+    disposed = true;
+    recognition.removeEventListener("result", handleResult);
+    recognition.removeEventListener("error", handleError);
+    recognition.removeEventListener("end", handleEnd);
+    if (options?.abort !== false) {
+      recognition.abort();
+    }
+  };
 
   return {
     start: () => recognition.start(),
     stop: () => recognition.stop(),
-    abort: () => recognition.abort(),
+    abort: dispose,
+    dispose,
   };
 }

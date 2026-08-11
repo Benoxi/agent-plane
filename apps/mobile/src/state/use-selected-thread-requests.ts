@@ -1,7 +1,11 @@
 import { useAtomValue } from "@effect/atom-react";
 import { useCallback, useMemo, useState } from "react";
 
-import { ApprovalRequestId, type ProviderApprovalDecision } from "@t3tools/contracts";
+import {
+  ApprovalRequestId,
+  type ProviderApprovalDecision,
+  type UserInputQuestion,
+} from "@t3tools/contracts";
 import { Atom } from "effect/unstable/reactivity";
 
 import { threadEnvironment } from "../state/threads";
@@ -13,6 +17,7 @@ import {
   setPendingUserInputCustomAnswer,
   sortThreadActivities,
   type PendingUserInputDraftAnswer,
+  updatePendingUserInputDraftOption,
 } from "../lib/threadActivity";
 import { appAtomRegistry } from "./atom-registry";
 import { useSelectedThreadDetail } from "./use-thread-detail";
@@ -23,16 +28,15 @@ const userInputDraftsByRequestKeyAtom = Atom.make<
   Record<string, Record<string, PendingUserInputDraftAnswer>>
 >({}).pipe(Atom.keepAlive, Atom.withLabel("mobile:user-input-drafts"));
 
-function setUserInputDraftOption(requestKey: string, questionId: string, label: string): void {
+function setUserInputDraftOption(
+  requestKey: string,
+  question: UserInputQuestion,
+  label: string,
+): void {
   const current = appAtomRegistry.get(userInputDraftsByRequestKeyAtom);
   appAtomRegistry.set(userInputDraftsByRequestKeyAtom, {
     ...current,
-    [requestKey]: {
-      ...current[requestKey],
-      [questionId]: {
-        selectedOptionLabel: label,
-      },
-    },
+    [requestKey]: updatePendingUserInputDraftOption(current[requestKey] ?? {}, question, label),
   });
 }
 
@@ -102,10 +106,15 @@ export function useSelectedThreadRequests() {
         return;
       }
 
+      const question = activePendingUserInput?.questions.find((entry) => entry.id === questionId);
+      if (!question) {
+        return;
+      }
+
       const requestKey = scopedRequestKey(selectedThreadShell.environmentId, requestId);
-      setUserInputDraftOption(requestKey, questionId, label);
+      setUserInputDraftOption(requestKey, question, label);
     },
-    [selectedThreadShell],
+    [activePendingUserInput, selectedThreadShell],
   );
 
   const onChangeUserInputCustomAnswer = useCallback(

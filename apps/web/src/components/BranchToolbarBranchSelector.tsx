@@ -332,7 +332,10 @@ export function BranchToolbarBranchSelector({
   // Branch actions
   // ---------------------------------------------------------------------------
   const copyBranchName = useCallback((branchName: string) => {
-    void writeTextToClipboard(branchName, "branch name").then(
+    void writeTextToClipboard(branchName, "branch name", {
+      announceSuccess: false,
+      announceFailure: false,
+    }).then(
       (didCopy) => {
         if (!didCopy) return;
         toastManager.add({
@@ -613,9 +616,9 @@ export function BranchToolbarBranchSelector({
   // Action-oriented tooltip (the pill opens the PR), distinct from the sidebar's
   // state-description tooltip.
   const branchPrTooltip = branchPr
-    ? `Open ${sourceControlPresentation.terminology.singular} #${branchPr.number} (${branchPr.state}) in browser`
+    ? `Open ${sourceControlPresentation.terminology.singular} #${branchPr.number} (${branchPr.state})`
     : "";
-  const openPrLink = useOpenPrLink();
+  const openPrLink = useOpenPrLink(threadRef);
 
   function renderPickerItem(itemValue: string, index: number) {
     if (checkoutPullRequestItemValue && itemValue === checkoutPullRequestItemValue) {

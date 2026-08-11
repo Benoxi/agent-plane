@@ -1,13 +1,46 @@
-import { memo, type PointerEventHandler, useEffect, useState } from "react";
+import {
+  memo,
+  type FormEvent,
+  type PointerEventHandler,
+  type ReactNode,
+  useEffect,
+  useState,
+} from "react";
 import { ChevronDownIcon, ChevronLeftIcon, Clock3Icon } from "lucide-react";
-import { useEnvironmentIdentificationMode } from "~/hooks/useSettings";
 import { cn } from "~/lib/utils";
-import { StageBackdropButtonArt, useSidebarStageBackdropVariant } from "../SidebarStageBackdrop";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { Spinner } from "../ui/spinner";
+
+const MAX_SCHEDULE_DELAY_SECONDS = 30 * 24 * 60 * 60;
+
+/** Parse a compact, explicit duration such as `30m`, `1h 15m`, or `45s`. */
+export function parseScheduleDurationSeconds(value: string): number | null {
+  const normalized = value.trim().toLowerCase().replace(/\s+/gu, "");
+  if (normalized.length === 0) return null;
+
+  const parts = [...normalized.matchAll(/(\d+(?:\.\d+)?)([hms])/gu)];
+  if (parts.length === 0 || parts.map((part) => part[0]).join("") !== normalized) return null;
+
+  const seconds = parts.reduce((total, part) => {
+    const amount = Number(part[1]);
+    const multiplier = part[2] === "h" ? 3600 : part[2] === "m" ? 60 : 1;
+    return total + amount * multiplier;
+  }, 0);
+  if (!Number.isFinite(seconds) || seconds <= 0 || seconds > MAX_SCHEDULE_DELAY_SECONDS) {
+    return null;
+  }
+  return Math.ceil(seconds);
+}
+
+export function formatScheduledLocalTime(delaySeconds: number, nowMs = Date.now()): string {
+  return new Intl.DateTimeFormat(undefined, {
+    dateStyle: "medium",
+    timeStyle: "short",
+  }).format(new Date(nowMs + delaySeconds * 1000));
+}
 
 interface PendingActionState {
   questionIndex: number;
@@ -30,11 +63,12 @@ interface ComposerPrimaryActionsProps {
   isPreparingWorktree: boolean;
   hasSendableContent: boolean;
   scheduleDisabledReason: string | null;
+  scheduleQuotaContext?: ReactNode;
   preserveComposerFocusOnPointerDown?: boolean;
   onPreviousPendingQuestion: () => void;
   onInterrupt: () => void;
   onImplementPlanInNewThread: () => void;
-  onSchedule: (delaySeconds: number) => void;
+  onSchedule: (delaySeconds: number) => void | Promise<void>;
 }
 
 export const formatPendingPrimaryActionLabel = (input: {
@@ -55,6 +89,15 @@ export const formatPendingPrimaryActionLabel = (input: {
   return input.questionIndex > 0 ? "Submit answers" : "Submit answer";
 };
 
+export const preventScheduledMessageSubmitPropagation = (
+  event: Pick<FormEvent<HTMLFormElement>, "preventDefault" | "stopPropagation">,
+) => {
+  event.preventDefault();
+  // The popover is portalled out of the composer form in the DOM, but React
+  // events still bubble through the component tree.
+  event.stopPropagation();
+};
+
 const preventPointerFocus: PointerEventHandler<HTMLElement> = (event) => {
   event.preventDefault();
 };
@@ -72,6 +115,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
   isPreparingWorktree,
   hasSendableContent,
   scheduleDisabledReason,
+  scheduleQuotaContext,
   preserveComposerFocusOnPointerDown = false,
   onPreviousPendingQuestion,
   onInterrupt,
@@ -82,22 +126,43 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
     ? { onPointerDown: preventPointerFocus }
     : undefined;
   const [scheduleOpen, setScheduleOpen] = useState(false);
-  const [delaySeconds, setDelaySeconds] = useState("30");
+  const [scheduleDuration, setScheduleDuration] = useState("30m");
+  const [scheduleNowMs, setScheduleNowMs] = useState(() => Date.now());
 
   useEffect(() => {
     if (!scheduleOpen) {
-      setDelaySeconds("30");
+      setScheduleDuration("30m");
     }
   }, [scheduleOpen]);
-  const environmentIdentificationMode = useEnvironmentIdentificationMode();
+  useEffect(() => {
+    if (!scheduleOpen) return;
+    setScheduleNowMs(Date.now());
+    const intervalId = window.setInterval(() => setScheduleNowMs(Date.now()), 1_000);
+    return () => window.clearInterval(intervalId);
+  }, [scheduleOpen]);
   const isSendDisabled = sendDisabledReason !== null;
-  const stageBackdropVariant = useSidebarStageBackdropVariant(
-    environmentIdentificationMode === "artwork",
+
+  const renderStopGenerationButton = (insidePendingAction: boolean) => (
+    <button
+      type="button"
+      className={cn(
+        "flex cursor-pointer items-center justify-center rounded-full bg-destructive/90 text-white shadow-xs shadow-destructive/24 inset-shadow-[0_1px_--theme(--color-white/16%)] transition-all duration-150 hover:bg-destructive hover:scale-105 active:inset-shadow-[0_1px_--theme(--color-black/8%)] active:shadow-none",
+        insidePendingAction ? "size-8 sm:size-7" : "size-8 sm:h-8 sm:w-8",
+      )}
+      {...pointerFocusProps}
+      onClick={onInterrupt}
+      aria-label="Stop generation"
+    >
+      <svg width="12" height="12" viewBox="0 0 12 12" fill="currentColor" aria-hidden="true">
+        <rect x="2" y="2" width="8" height="8" rx="1.5" />
+      </svg>
+    </button>
   );
 
   if (pendingAction) {
     return (
       <div className={cn("flex items-center justify-end", compact ? "gap-1.5" : "gap-2")}>
+        {isRunning ? renderStopGenerationButton(true) : null}
         {pendingAction.questionIndex > 0 ? (
           compact ? (
             <Button
@@ -127,7 +192,10 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
         <Button
           type="submit"
           size="sm"
-          className={cn("rounded-full", compact ? "px-3" : "px-4")}
+          className={cn(
+            "rounded-full bg-message-action text-message-action-foreground hover:bg-message-action-hover",
+            compact ? "px-3" : "px-4",
+          )}
           {...pointerFocusProps}
           disabled={
             isEnvironmentUnavailable ||
@@ -147,19 +215,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
   }
 
   if (isRunning) {
-    return (
-      <button
-        type="button"
-        className="flex size-8 cursor-pointer items-center justify-center rounded-full bg-destructive/90 text-white shadow-xs shadow-destructive/24 inset-shadow-[0_1px_--theme(--color-white/16%)] transition-all duration-150 hover:bg-destructive hover:scale-105 active:inset-shadow-[0_1px_--theme(--color-black/8%)] active:shadow-none sm:h-8 sm:w-8"
-        {...pointerFocusProps}
-        onClick={onInterrupt}
-        aria-label="Stop generation"
-      >
-        <svg width="12" height="12" viewBox="0 0 12 12" fill="currentColor" aria-hidden="true">
-          <rect x="2" y="2" width="8" height="8" rx="1.5" />
-        </svg>
-      </button>
-    );
+    return renderStopGenerationButton(false);
   }
 
   if (showPlanFollowUpPrompt) {
@@ -168,7 +224,10 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
         <Button
           type="submit"
           size="sm"
-          className={cn("rounded-full", compact ? "h-9 px-3 sm:h-8" : "h-9 px-4 sm:h-8")}
+          className={cn(
+            "rounded-full bg-message-action text-message-action-foreground hover:bg-message-action-hover",
+            compact ? "h-9 px-3 sm:h-8" : "h-9 px-4 sm:h-8",
+          )}
           {...pointerFocusProps}
           disabled={isSendBusy || isSendDisabled || isConnecting || isEnvironmentUnavailable}
         >
@@ -182,7 +241,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
         <Button
           type="submit"
           size="sm"
-          className="h-9 rounded-l-full rounded-r-none px-4 sm:h-8"
+          className="h-9 rounded-l-full rounded-r-none bg-message-action px-4 text-message-action-foreground hover:bg-message-action-hover sm:h-8"
           {...pointerFocusProps}
           disabled={isSendBusy || isSendDisabled || isConnecting || isEnvironmentUnavailable}
         >
@@ -194,7 +253,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
               <Button
                 size="sm"
                 variant="default"
-                className="h-9 rounded-l-none rounded-r-full border-l-white/12 px-2 sm:h-8"
+                className="h-9 rounded-l-none rounded-r-full border-l-message-action-foreground/20 bg-message-action px-2 text-message-action-foreground hover:bg-message-action-hover sm:h-8"
                 aria-label="Implementation actions"
                 {...pointerFocusProps}
                 disabled={isSendBusy || isSendDisabled || isConnecting || isEnvironmentUnavailable}
@@ -216,7 +275,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
     );
   }
 
-  const parsedDelaySeconds = Number.parseInt(delaySeconds, 10);
+  const parsedDelaySeconds = parseScheduleDurationSeconds(scheduleDuration);
   const scheduleDisabled = scheduleDisabledReason !== null;
 
   return (
@@ -240,34 +299,58 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
           <form
             className="space-y-3"
             onSubmit={(event) => {
-              event.preventDefault();
-              if (!Number.isFinite(parsedDelaySeconds) || parsedDelaySeconds <= 0) {
+              preventScheduledMessageSubmitPropagation(event);
+              if (parsedDelaySeconds === null) {
                 return;
               }
-              onSchedule(parsedDelaySeconds);
+              void onSchedule(parsedDelaySeconds);
               setScheduleOpen(false);
             }}
           >
             <div className="space-y-1">
               <div className="font-medium text-sm">Schedule send</div>
               <div className="text-muted-foreground text-xs">
-                Queue this message to send after a delay in seconds.
+                Queue this message using the current web session scheduler.
               </div>
             </div>
             <label className="block space-y-1">
-              <span className="text-muted-foreground text-xs">Seconds</span>
+              <span className="text-muted-foreground text-xs">Delay</span>
               <Input
                 nativeInput
-                type="number"
-                min={1}
-                step={1}
-                value={delaySeconds}
+                type="text"
+                inputMode="text"
+                placeholder="30m"
+                value={scheduleDuration}
                 onChange={(event) => {
-                  setDelaySeconds(event.currentTarget.value);
+                  setScheduleDuration(event.currentTarget.value);
                 }}
                 autoFocus
               />
+              <span className="block text-[11px] text-muted-foreground">
+                Use h, m, or s — for example 1h 30m.
+              </span>
             </label>
+            <div className="flex gap-1.5" aria-label="Quick schedule presets">
+              {["5m", "30m", "1h"].map((preset) => (
+                <Button
+                  key={preset}
+                  type="button"
+                  size="xs"
+                  variant="outline"
+                  onClick={() => setScheduleDuration(preset)}
+                >
+                  {preset}
+                </Button>
+              ))}
+            </div>
+            <div className="rounded-md border border-border/60 bg-muted/25 px-2.5 py-2 text-xs">
+              <p className="text-foreground">
+                {parsedDelaySeconds === null
+                  ? "Enter a future delay up to 30 days."
+                  : `Sends ${formatScheduledLocalTime(parsedDelaySeconds, scheduleNowMs)} (local time)`}
+              </p>
+              {scheduleQuotaContext}
+            </div>
             <div className="flex items-center justify-end gap-2">
               <Button
                 type="button"
@@ -277,11 +360,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
               >
                 Cancel
               </Button>
-              <Button
-                type="submit"
-                size="sm"
-                disabled={!Number.isFinite(parsedDelaySeconds) || parsedDelaySeconds <= 0}
-              >
+              <Button type="submit" size="sm" disabled={parsedDelaySeconds === null}>
                 Schedule
               </Button>
             </div>
@@ -292,10 +371,8 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
       <button
         type="submit"
         className={cn(
-          "relative isolate flex h-9 w-9 items-center justify-center overflow-hidden rounded-full text-primary-foreground shadow-xs transition-all duration-150 enabled:cursor-pointer enabled:inset-shadow-[0_1px_--theme(--color-white/16%)] hover:scale-105 active:inset-shadow-[0_1px_--theme(--color-black/8%)] active:shadow-none disabled:pointer-events-none disabled:opacity-30 disabled:shadow-none disabled:hover:scale-100 sm:h-8 sm:w-8",
-          stageBackdropVariant
-            ? "bg-transparent enabled:shadow-black/24 enabled:hover:brightness-110"
-            : "bg-primary/90 enabled:shadow-primary/24 hover:bg-primary",
+          "relative isolate flex h-9 w-9 items-center justify-center overflow-hidden rounded-full text-message-action-foreground shadow-xs transition-all duration-150 enabled:cursor-pointer enabled:inset-shadow-[0_1px_--theme(--color-white/16%)] hover:scale-105 active:inset-shadow-[0_1px_--theme(--color-black/8%)] active:shadow-none disabled:pointer-events-none disabled:opacity-30 disabled:shadow-none disabled:hover:scale-100 sm:h-8 sm:w-8",
+          "bg-message-action enabled:shadow-message-action/24 hover:bg-message-action-hover",
         )}
         {...pointerFocusProps}
         disabled={
@@ -319,11 +396,6 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
                     : "Send message"
         }
       >
-        {stageBackdropVariant ? (
-          <span className="absolute inset-0 -z-10" aria-hidden="true">
-            <StageBackdropButtonArt variant={stageBackdropVariant} />
-          </span>
-        ) : null}
         {isConnecting || isSendBusy ? (
           <Spinner className="size-3.5" aria-hidden="true" />
         ) : (
