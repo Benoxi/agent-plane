@@ -5,9 +5,22 @@ import {
 } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { remainingCapacityTone, resolveAccountLimitsStatus } from "./accountLimitsPresentation";
+import {
+  remainingCapacityTone,
+  resolveAccountLimitsStatus,
+  resolveFutureResetAt,
+} from "./accountLimitsPresentation";
 
 const NOW = Date.parse("2026-08-11T12:00:00.000Z");
+
+describe("resolveFutureResetAt", () => {
+  it("keeps only a future provider reset", () => {
+    expect(resolveFutureResetAt("2026-08-11T12:01:00.000Z", NOW)).toBe("2026-08-11T12:01:00.000Z");
+    expect(resolveFutureResetAt("2026-08-11T12:00:00.000Z", NOW)).toBeNull();
+    expect(resolveFutureResetAt("2026-08-11T11:59:00.000Z", NOW)).toBeNull();
+    expect(resolveFutureResetAt("invalid", NOW)).toBeNull();
+  });
+});
 
 function snapshot(
   provider: "codex" | "claude",

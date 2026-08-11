@@ -23,6 +23,12 @@ export interface AccountLimitsStatus {
   readonly remainingPercent: number | null;
 }
 
+export function resolveFutureResetAt(resetAt: string | null, nowMs: number): string | null {
+  if (resetAt === null) return null;
+  const resetMs = Date.parse(resetAt);
+  return Number.isFinite(resetMs) && resetMs > nowMs ? resetAt : null;
+}
+
 export function usageProviderForDriver(driver: ProviderDriverKind): "codex" | "claude" | null {
   if (driver === "codex") return "codex";
   if (driver === "claudeAgent") return "claude";

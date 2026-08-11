@@ -1,4 +1,11 @@
-import { memo, type FormEvent, type PointerEventHandler, useEffect, useState } from "react";
+import {
+  memo,
+  type FormEvent,
+  type PointerEventHandler,
+  type ReactNode,
+  useEffect,
+  useState,
+} from "react";
 import { ChevronDownIcon, ChevronLeftIcon, Clock3Icon } from "lucide-react";
 import { cn } from "~/lib/utils";
 import { Button } from "../ui/button";
@@ -6,6 +13,34 @@ import { Input } from "../ui/input";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { Spinner } from "../ui/spinner";
+
+const MAX_SCHEDULE_DELAY_SECONDS = 30 * 24 * 60 * 60;
+
+/** Parse a compact, explicit duration such as `30m`, `1h 15m`, or `45s`. */
+export function parseScheduleDurationSeconds(value: string): number | null {
+  const normalized = value.trim().toLowerCase().replace(/\s+/gu, "");
+  if (normalized.length === 0) return null;
+
+  const parts = [...normalized.matchAll(/(\d+(?:\.\d+)?)([hms])/gu)];
+  if (parts.length === 0 || parts.map((part) => part[0]).join("") !== normalized) return null;
+
+  const seconds = parts.reduce((total, part) => {
+    const amount = Number(part[1]);
+    const multiplier = part[2] === "h" ? 3600 : part[2] === "m" ? 60 : 1;
+    return total + amount * multiplier;
+  }, 0);
+  if (!Number.isFinite(seconds) || seconds <= 0 || seconds > MAX_SCHEDULE_DELAY_SECONDS) {
+    return null;
+  }
+  return Math.ceil(seconds);
+}
+
+export function formatScheduledLocalTime(delaySeconds: number, nowMs = Date.now()): string {
+  return new Intl.DateTimeFormat(undefined, {
+    dateStyle: "medium",
+    timeStyle: "short",
+  }).format(new Date(nowMs + delaySeconds * 1000));
+}
 
 interface PendingActionState {
   questionIndex: number;
@@ -28,6 +63,7 @@ interface ComposerPrimaryActionsProps {
   isPreparingWorktree: boolean;
   hasSendableContent: boolean;
   scheduleDisabledReason: string | null;
+  scheduleQuotaContext?: ReactNode;
   preserveComposerFocusOnPointerDown?: boolean;
   onPreviousPendingQuestion: () => void;
   onInterrupt: () => void;
@@ -79,6 +115,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
   isPreparingWorktree,
   hasSendableContent,
   scheduleDisabledReason,
+  scheduleQuotaContext,
   preserveComposerFocusOnPointerDown = false,
   onPreviousPendingQuestion,
   onInterrupt,
@@ -89,12 +126,19 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
     ? { onPointerDown: preventPointerFocus }
     : undefined;
   const [scheduleOpen, setScheduleOpen] = useState(false);
-  const [delaySeconds, setDelaySeconds] = useState("30");
+  const [scheduleDuration, setScheduleDuration] = useState("30m");
+  const [scheduleNowMs, setScheduleNowMs] = useState(() => Date.now());
 
   useEffect(() => {
     if (!scheduleOpen) {
-      setDelaySeconds("30");
+      setScheduleDuration("30m");
     }
+  }, [scheduleOpen]);
+  useEffect(() => {
+    if (!scheduleOpen) return;
+    setScheduleNowMs(Date.now());
+    const intervalId = window.setInterval(() => setScheduleNowMs(Date.now()), 1_000);
+    return () => window.clearInterval(intervalId);
   }, [scheduleOpen]);
   const isSendDisabled = sendDisabledReason !== null;
 
@@ -231,7 +275,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
     );
   }
 
-  const parsedDelaySeconds = Number.parseInt(delaySeconds, 10);
+  const parsedDelaySeconds = parseScheduleDurationSeconds(scheduleDuration);
   const scheduleDisabled = scheduleDisabledReason !== null;
 
   return (
@@ -256,7 +300,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
             className="space-y-3"
             onSubmit={(event) => {
               preventScheduledMessageSubmitPropagation(event);
-              if (!Number.isFinite(parsedDelaySeconds) || parsedDelaySeconds <= 0) {
+              if (parsedDelaySeconds === null) {
                 return;
               }
               void onSchedule(parsedDelaySeconds);
@@ -266,23 +310,47 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
             <div className="space-y-1">
               <div className="font-medium text-sm">Schedule send</div>
               <div className="text-muted-foreground text-xs">
-                Queue this message to send after a delay in seconds.
+                Queue this message using the current web session scheduler.
               </div>
             </div>
             <label className="block space-y-1">
-              <span className="text-muted-foreground text-xs">Seconds</span>
+              <span className="text-muted-foreground text-xs">Delay</span>
               <Input
                 nativeInput
-                type="number"
-                min={1}
-                step={1}
-                value={delaySeconds}
+                type="text"
+                inputMode="text"
+                placeholder="30m"
+                value={scheduleDuration}
                 onChange={(event) => {
-                  setDelaySeconds(event.currentTarget.value);
+                  setScheduleDuration(event.currentTarget.value);
                 }}
                 autoFocus
               />
+              <span className="block text-[11px] text-muted-foreground">
+                Use h, m, or s — for example 1h 30m.
+              </span>
             </label>
+            <div className="flex gap-1.5" aria-label="Quick schedule presets">
+              {["5m", "30m", "1h"].map((preset) => (
+                <Button
+                  key={preset}
+                  type="button"
+                  size="xs"
+                  variant="outline"
+                  onClick={() => setScheduleDuration(preset)}
+                >
+                  {preset}
+                </Button>
+              ))}
+            </div>
+            <div className="rounded-md border border-border/60 bg-muted/25 px-2.5 py-2 text-xs">
+              <p className="text-foreground">
+                {parsedDelaySeconds === null
+                  ? "Enter a future delay up to 30 days."
+                  : `Sends ${formatScheduledLocalTime(parsedDelaySeconds, scheduleNowMs)} (local time)`}
+              </p>
+              {scheduleQuotaContext}
+            </div>
             <div className="flex items-center justify-end gap-2">
               <Button
                 type="button"
@@ -292,11 +360,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
               >
                 Cancel
               </Button>
-              <Button
-                type="submit"
-                size="sm"
-                disabled={!Number.isFinite(parsedDelaySeconds) || parsedDelaySeconds <= 0}
-              >
+              <Button type="submit" size="sm" disabled={parsedDelaySeconds === null}>
                 Schedule
               </Button>
             </div>

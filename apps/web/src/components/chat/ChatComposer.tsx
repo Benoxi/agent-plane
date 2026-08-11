@@ -91,7 +91,7 @@ import {
 } from "../composerFooterLayout";
 import { type ComposerPromptEditorHandle, ComposerPromptEditor } from "../ComposerPromptEditor";
 import { ProviderModelPicker } from "./ProviderModelPicker";
-import { AccountLimitsIndicator } from "../usage/AccountLimits";
+import { AccountLimitsIndicator, AccountLimitsScheduleContext } from "../usage/AccountLimits";
 import { type ComposerCommandItem, ComposerCommandMenu } from "./ComposerCommandMenu";
 import { ComposerPendingApprovalActions } from "./ComposerPendingApprovalActions";
 import { CompactComposerControlsMenu } from "./CompactComposerControlsMenu";
@@ -498,6 +498,7 @@ const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryActions(
     onToggle: () => void;
   } | null;
   scheduleDisabledReason: string | null;
+  scheduleQuotaContext?: ReactNode;
   preserveComposerFocusOnPointerDown?: boolean;
   onPreviousPendingQuestion: () => void;
   onInterrupt: () => void;
@@ -543,6 +544,7 @@ const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryActions(
         isPreparingWorktree={props.isPreparingWorktree}
         hasSendableContent={props.hasSendableContent}
         scheduleDisabledReason={props.scheduleDisabledReason}
+        scheduleQuotaContext={props.scheduleQuotaContext}
         preserveComposerFocusOnPointerDown={props.preserveComposerFocusOnPointerDown ?? false}
         onPreviousPendingQuestion={props.onPreviousPendingQuestion}
         onInterrupt={props.onInterrupt}
@@ -3631,6 +3633,16 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                   hasSendableContent={composerSendState.hasSendableContent}
                   voiceDictation={voiceDictation}
                   scheduleDisabledReason={scheduleDisabledReason}
+                  scheduleQuotaContext={
+                    selectedProviderEntry ? (
+                      <AccountLimitsScheduleContext
+                        driver={selectedProviderEntry.driverKind}
+                        environmentId={environmentId}
+                        providerInstanceId={selectedProviderEntry.instanceId}
+                        model={selectedModelForPickerWithCustomFallback}
+                      />
+                    ) : undefined
+                  }
                   preserveComposerFocusOnPointerDown={isMobileViewport}
                   onPreviousPendingQuestion={onPreviousActivePendingUserInputQuestion}
                   onInterrupt={handleInterruptPrimaryAction}

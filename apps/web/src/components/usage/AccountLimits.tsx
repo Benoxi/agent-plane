@@ -27,6 +27,7 @@ import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import {
   remainingCapacityTone,
   resolveAccountLimitsStatus,
+  resolveFutureResetAt,
   usageProviderForDriver,
   type AccountLimitsTone,
 } from "./accountLimitsPresentation";
@@ -257,6 +258,40 @@ export function AccountLimitsIndicator(props: {
         />
       </PopoverPopup>
     </Popover>
+  );
+}
+
+/** Selected-model quota context for the deliberately web-only scheduler UI. */
+export function AccountLimitsScheduleContext(props: {
+  readonly driver: ProviderDriverKind;
+  readonly environmentId: EnvironmentId;
+  readonly providerInstanceId: ProviderInstanceId;
+  readonly model: string;
+}) {
+  const { getSnapshot, isSettling } = useAccountLimits();
+  const provider = usageProviderForDriver(props.driver);
+  if (provider === null) return null;
+
+  const nowMs = Date.now();
+  const snapshot = getSnapshot(props.environmentId, props.providerInstanceId);
+  const status = resolveAccountLimitsStatus({
+    driver: props.driver,
+    snapshot,
+    isSettling,
+    nowMs,
+    model: props.model,
+  });
+  const resetAt = resolveFutureResetAt(status?.constrainedWindow?.resetsAt ?? null, nowMs);
+  const formattedReset = formatResetDateTime(resetAt);
+
+  return (
+    <p className="mt-1 text-[11px] text-muted-foreground">
+      {status?.tone === "loading"
+        ? `${PROVIDER_LABEL[provider]} usage reset loading…`
+        : formattedReset === null
+          ? `${PROVIDER_LABEL[provider]} usage reset unavailable`
+          : `${PROVIDER_LABEL[provider]} ${props.model} resets ${formattedReset}`}
+    </p>
   );
 }
 
