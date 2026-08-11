@@ -1,4 +1,8 @@
-import { pipeline, type AutomaticSpeechRecognitionPipeline } from "@huggingface/transformers";
+import { env, pipeline, type AutomaticSpeechRecognitionPipeline } from "@huggingface/transformers";
+import ortWasmFactoryUrl from "onnxruntime-web/ort-wasm-simd-threaded.asyncify.mjs?url";
+import ortWasmUrl from "onnxruntime-web/ort-wasm-simd-threaded.asyncify.wasm?url";
+
+import { localSpeechErrorMessage, resolveLocalSpeechRuntimeAssets } from "./localSpeechRuntime";
 
 const MODEL_ID = "onnx-community/whisper-tiny";
 
@@ -16,20 +20,26 @@ type TranscriptionResponse =
 let transcriberPromise: Promise<AutomaticSpeechRecognitionPipeline> | undefined;
 let queue = Promise.resolve();
 
+// Transformers.js defaults to loading ONNX Runtime from jsDelivr. Remote module
+// loading is unreliable in Electron's custom-protocol worker and unnecessary
+// because Vite already packages these files with the application.
+if (env.backends.onnx.wasm) {
+  env.backends.onnx.wasm.wasmPaths = resolveLocalSpeechRuntimeAssets(
+    globalThis.location.href,
+    ortWasmFactoryUrl,
+    ortWasmUrl,
+  );
+}
+// With explicit local paths, preloading would only turn the local module into
+// a blob URL. Electron's CSP intentionally permits same-origin scripts instead.
+env.useWasmCache = false;
+
 function getTranscriber(): Promise<AutomaticSpeechRecognitionPipeline> {
   transcriberPromise ??= pipeline("automatic-speech-recognition", MODEL_ID, {
     device: "wasm",
     dtype: "q4",
   });
   return transcriberPromise;
-}
-
-function errorMessage(cause: unknown): string {
-  const message = cause instanceof Error ? cause.message : "";
-  if (/fetch|network|download|load model|unauthorized|forbidden/iu.test(message)) {
-    return "The local speech model could not be downloaded. Check your connection and try again.";
-  }
-  return "Local voice transcription failed. Try again or check the microphone input.";
 }
 
 async function transcribe(request: TranscriptionRequest): Promise<void> {
@@ -48,7 +58,12 @@ async function transcribe(request: TranscriptionRequest): Promise<void> {
     // A failed model initialization must be retryable, for example after the
     // user's connection returns during the one-time model download.
     transcriberPromise = undefined;
-    response = { type: "error", requestId: request.requestId, message: errorMessage(cause) };
+    console.error("Local voice transcription failed", cause);
+    response = {
+      type: "error",
+      requestId: request.requestId,
+      message: localSpeechErrorMessage(cause),
+    };
   }
   globalThis.postMessage(response, { transfer: [] });
 }

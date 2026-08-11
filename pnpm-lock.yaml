@@ -581,6 +581,9 @@ importers:
       lucide-react:
         specifier: ^0.564.0
         version: 0.564.0(react@19.2.6)
+      onnxruntime-web:
+        specifier: 1.26.0-dev.20260416-b7804b056c
+        version: 1.26.0-dev.20260416-b7804b056c
       react:
         specifier: 19.2.6
         version: 19.2.6
