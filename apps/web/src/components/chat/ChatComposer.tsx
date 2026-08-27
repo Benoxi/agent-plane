@@ -3582,6 +3582,11 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                         environmentId={environmentId}
                         providerInstanceId={selectedProviderEntry.instanceId}
                         model={selectedModelForPickerWithCustomFallback}
+                        scopeKey={
+                          typeof composerDraftTarget === "string"
+                            ? `draft:${composerDraftTarget}`
+                            : `thread:${composerDraftTarget.environmentId}:${composerDraftTarget.threadId}`
+                        }
                       />
                     ) : null}
                   </>

@@ -17,7 +17,7 @@ import type {
   ProviderDriverKind,
   ProviderInstanceId,
 } from "@t3tools/contracts";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 
 import { cn } from "../../lib/utils";
 import { useAccountLimits } from "../../state/accountLimits";
@@ -173,6 +173,8 @@ export function AccountLimitsIndicator(props: {
   readonly environmentId: EnvironmentId;
   readonly providerInstanceId: ProviderInstanceId;
   readonly model: string;
+  /** Thread or draft identity used only to dismiss details on navigation. */
+  readonly scopeKey: string;
 }) {
   const { getSnapshot, isSettling } = useAccountLimits();
   const nowMs = useNowMs();
@@ -187,27 +189,15 @@ export function AccountLimitsIndicator(props: {
     model: props.model,
   });
   const [open, setOpen] = useState(false);
-  const closeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  useEffect(
-    () => () => {
-      if (closeTimerRef.current !== null) clearTimeout(closeTimerRef.current);
-    },
-    [],
-  );
+  // A usage snapshot is scoped to this exact provider selection. Never leave
+  // details from the previous thread/model floating over the newly selected UI.
+  useEffect(() => {
+    setOpen(false);
+  }, [props.driver, props.environmentId, props.providerInstanceId, props.model, props.scopeKey]);
 
   if (provider === null || status === null) return null;
 
-  const cancelClose = () => {
-    if (closeTimerRef.current !== null) {
-      clearTimeout(closeTimerRef.current);
-      closeTimerRef.current = null;
-    }
-  };
-  const scheduleClose = () => {
-    cancelClose();
-    closeTimerRef.current = setTimeout(() => setOpen(false), 120);
-  };
   const summary =
     status.remainingPercent === null || status.constrainedWindow === null
       ? status.tone === "loading"
@@ -228,12 +218,6 @@ export function AccountLimitsIndicator(props: {
             className="size-7 min-h-7 shrink-0"
             aria-label={`${PROVIDER_LABEL[provider]} ${summary}. View usage limits`}
             data-account-limits-tone={status.tone}
-            onFocus={() => setOpen(true)}
-            onMouseEnter={() => {
-              cancelClose();
-              setOpen(true);
-            }}
-            onMouseLeave={scheduleClose}
           />
         }
       >
@@ -242,12 +226,7 @@ export function AccountLimitsIndicator(props: {
           className={cn("size-2.5 rounded-full", INDICATOR_TONE_CLASS[status.tone])}
         />
       </PopoverTrigger>
-      <PopoverPopup
-        side="top"
-        align="start"
-        onMouseEnter={cancelClose}
-        onMouseLeave={scheduleClose}
-      >
+      <PopoverPopup side="top" align="start">
         <AccountLimitsDetails
           provider={provider}
           model={props.model}
