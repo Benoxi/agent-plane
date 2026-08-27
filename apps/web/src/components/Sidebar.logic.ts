@@ -274,6 +274,29 @@ export function isTrailingDoubleClick(detail: number): boolean {
   return detail > 1;
 }
 
+export type ThreadRowShortcut = "activate" | "rename" | "delete";
+
+/** Keyboard actions owned by a focused sidebar thread row. */
+export function resolveThreadRowShortcut(input: {
+  key: string;
+  repeat: boolean;
+  isRowTarget: boolean;
+  isRenaming: boolean;
+}): ThreadRowShortcut | null {
+  if (!input.isRowTarget || input.isRenaming) return null;
+  if (input.key === "F2" && !input.repeat) return "rename";
+  if (input.key === "Delete" && !input.repeat) return "delete";
+  if (input.key === "Enter" || input.key === " ") return "activate";
+  return null;
+}
+
+export function shouldConfirmThreadDelete(input: {
+  preferenceEnabled: boolean;
+  source: "menu" | "keyboard";
+}): boolean {
+  return input.source === "keyboard" || input.preferenceEnabled;
+}
+
 export function orderItemsByPreferredIds<TItem, TId>(input: {
   items: readonly TItem[];
   preferredIds: readonly TId[];
