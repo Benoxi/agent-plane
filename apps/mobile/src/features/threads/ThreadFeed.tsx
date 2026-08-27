@@ -81,7 +81,7 @@ import { copyTextWithHaptic } from "../../lib/copyTextWithHaptic";
 import { tryOpenExternalUrl } from "../../lib/openExternalUrl";
 import { downloadAndShareAttachment } from "../../lib/attachmentDownload";
 import { hasWideMarkdownBlock } from "../../lib/wideMarkdownBlocks";
-import { shouldShowAssistantMessageMeta } from "./threadMessageMeta";
+import { shouldShowAssistantMessageMeta, shouldShowMessageCopyAction } from "./threadMessageMeta";
 import { faviconUrlForOrigin } from "@t3tools/shared/favicon";
 import {
   hasNativeSelectableMarkdownText,
@@ -1475,6 +1475,12 @@ function renderFeedEntry(
       assistantTurnStillInProgress,
       streaming: message.streaming,
     });
+    const showCopyAction = shouldShowMessageCopyAction({
+      role: message.role,
+      text: message.text,
+      assistantTurnStillInProgress,
+      streaming: message.streaming,
+    });
 
     if (isUser) {
       return (
@@ -1571,13 +1577,14 @@ function renderFeedEntry(
                 <SymbolView name="pencil" size={14} tintColor={iconSubtleColor} />
               </Pressable>
             ) : null}
-            {message.text.trim().length > 0 ? (
+            {showCopyAction ? (
               <CopyTextButton
                 accessibilityLabel="Copy message"
                 text={message.text}
                 tintColor={iconSubtleColor}
-                buttonSize={28}
-                iconSize={13}
+                borderColor={iconSubtleColor}
+                buttonSize={36}
+                iconSize={16}
               />
             ) : null}
           </View>
@@ -1632,18 +1639,23 @@ function renderFeedEntry(
             <MessageAttachmentUnknown key={attachment.id} name={attachment.name} />
           );
         })}
-        {showAssistantMeta ? (
+        {showAssistantMeta || showCopyAction ? (
           <View className="mt-1 flex-row items-center gap-1">
-            <CopyTextButton
-              accessibilityLabel="Copy message"
-              text={renderedText}
-              tintColor={iconSubtleColor}
-              buttonSize={28}
-              iconSize={13}
-            />
-            <Text className="font-t3-medium text-xs tabular-nums text-adaptive-neutral-600-400">
-              {timestampLabel}
-            </Text>
+            {showCopyAction ? (
+              <CopyTextButton
+                accessibilityLabel="Copy message"
+                text={renderedText}
+                tintColor={iconSubtleColor}
+                borderColor={iconSubtleColor}
+                buttonSize={36}
+                iconSize={16}
+              />
+            ) : null}
+            {showAssistantMeta ? (
+              <Text className="font-t3-medium text-xs tabular-nums text-adaptive-neutral-600-400">
+                {timestampLabel}
+              </Text>
+            ) : null}
           </View>
         ) : null}
       </Animated.View>
