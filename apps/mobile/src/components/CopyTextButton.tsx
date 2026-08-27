@@ -61,9 +61,9 @@ export const CopyTextButton = memo(function CopyTextButton(props: {
         alignItems: "center",
         justifyContent: "center",
         borderRadius: 9,
-        borderWidth: props.borderColor ? 1 : 0,
-        borderColor: props.borderColor,
-        backgroundColor: props.backgroundColor,
+        borderWidth: 1,
+        borderColor: props.borderColor ?? props.tintColor,
+        backgroundColor: props.backgroundColor ?? "transparent",
         opacity: pressed ? 0.52 : 1,
       })}
     >
