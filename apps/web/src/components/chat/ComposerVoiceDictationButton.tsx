@@ -33,10 +33,10 @@ export function ComposerVoiceDictationButton(props: ComposerVoiceDictationButton
         render={
           <Button
             type="button"
-            variant="outline"
+            variant="ghost"
             size="icon"
             className={cn(
-              "h-9 w-9 rounded-full border-border/70 bg-card text-muted-foreground shadow-xs transition-colors duration-150 hover:bg-accent hover:text-foreground disabled:pointer-events-none disabled:opacity-30 sm:h-8 sm:w-8",
+              "h-9 w-9 rounded-full bg-transparent text-muted-foreground shadow-none transition-colors duration-150 hover:bg-accent hover:text-foreground disabled:pointer-events-none disabled:opacity-30 sm:h-8 sm:w-8",
               props.isListening &&
                 "border-destructive/35 bg-destructive/10 text-destructive hover:bg-destructive/15 hover:text-destructive",
             )}
