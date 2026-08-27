@@ -17,12 +17,14 @@ import {
   resolveProjectStatusIndicator,
   resolveSidebarStageBadgeLabel,
   resolveThreadRowClassName,
+  resolveThreadRowShortcut,
   resolveSidebarThreadStatus,
   resolveThreadStatusPill,
   resolveWorkingStartedAt,
   searchSidebarThreadsByTitle,
   formatWorkingDurationLabel,
   shouldNavigateAfterProjectRemoval,
+  shouldConfirmThreadDelete,
   shouldClearThreadSelectionOnMouseDown,
   sortLogicalProjectsForSidebar,
   sortSettledThreadsForSidebar,
@@ -34,6 +36,56 @@ import {
   sortScopedProjectsForSidebar,
   THREAD_JUMP_HINT_SHOW_DELAY_MS,
 } from "./Sidebar.logic";
+
+describe("resolveThreadRowShortcut", () => {
+  it("maps focused-row file-list shortcuts", () => {
+    expect(
+      resolveThreadRowShortcut({ key: "F2", repeat: false, isRowTarget: true, isRenaming: false }),
+    ).toBe("rename");
+    expect(
+      resolveThreadRowShortcut({
+        key: "Delete",
+        repeat: false,
+        isRowTarget: true,
+        isRenaming: false,
+      }),
+    ).toBe("delete");
+  });
+
+  it("ignores repeated, nested-control, and rename-field events", () => {
+    expect(
+      resolveThreadRowShortcut({
+        key: "Delete",
+        repeat: true,
+        isRowTarget: true,
+        isRenaming: false,
+      }),
+    ).toBeNull();
+    expect(
+      resolveThreadRowShortcut({ key: "F2", repeat: false, isRowTarget: false, isRenaming: false }),
+    ).toBeNull();
+    expect(
+      resolveThreadRowShortcut({
+        key: "Delete",
+        repeat: false,
+        isRowTarget: true,
+        isRenaming: true,
+      }),
+    ).toBeNull();
+  });
+});
+
+describe("shouldConfirmThreadDelete", () => {
+  it("always confirms keyboard deletion regardless of the menu preference", () => {
+    expect(shouldConfirmThreadDelete({ preferenceEnabled: false, source: "keyboard" })).toBe(true);
+    expect(shouldConfirmThreadDelete({ preferenceEnabled: true, source: "keyboard" })).toBe(true);
+  });
+
+  it("preserves the existing preference for menu deletion", () => {
+    expect(shouldConfirmThreadDelete({ preferenceEnabled: false, source: "menu" })).toBe(false);
+    expect(shouldConfirmThreadDelete({ preferenceEnabled: true, source: "menu" })).toBe(true);
+  });
+});
 import {
   EnvironmentId,
   OrchestrationLatestTurn,

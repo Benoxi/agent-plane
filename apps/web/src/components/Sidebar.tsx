@@ -131,6 +131,8 @@ import {
   resolveAdjacentThreadId,
   resolveSettledTimestamp,
   resolveSidebarThreadStatus,
+  resolveThreadRowShortcut,
+  shouldConfirmThreadDelete,
   searchSidebarThreadsByTitle,
   resolveWorkingStartedAt,
   sortLogicalProjectsForSidebar,
@@ -703,6 +705,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
   onThreadClick: (event: ReactMouseEvent, threadRef: ScopedThreadRef) => void;
   onThreadActivate: (threadRef: ScopedThreadRef) => void;
   onStartRename: (threadRef: ScopedThreadRef, title: string) => void;
+  onRequestDelete: (threadRef: ScopedThreadRef, title: string) => Promise<void>;
   onRenameTitleChange: (title: string) => void;
   onCommitRename: (threadRef: ScopedThreadRef, title: string, originalTitle: string) => void;
   onCancelRename: () => void;
@@ -725,6 +728,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
     onContextMenu,
     onAcknowledgeWoke,
     onRenameTitleChange,
+    onRequestDelete,
     onSettle,
     onSnooze,
     onStartRename,
@@ -923,12 +927,29 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
   );
   const handleKeyDown = useCallback(
     (event: ReactKeyboardEvent) => {
-      if (event.target !== event.currentTarget) return;
-      if (event.key !== "Enter" && event.key !== " ") return;
+      const shortcut = resolveThreadRowShortcut({
+        key: event.key,
+        repeat: event.repeat,
+        isRowTarget: event.target === event.currentTarget,
+        isRenaming,
+      });
+      if (shortcut === null) return;
       event.preventDefault();
-      onThreadActivate(threadRef);
+      event.stopPropagation();
+      if (shortcut === "rename") {
+        onStartRename(threadRef, thread.title);
+      } else if (shortcut === "delete") {
+        if (deleteRequestPendingRef.current) return;
+        deleteRequestPendingRef.current = true;
+        void onRequestDelete(threadRef, thread.title).finally(() => {
+          deleteRequestPendingRef.current = false;
+          window.requestAnimationFrame(() => rowRef.current?.focus());
+        });
+      } else {
+        onThreadActivate(threadRef);
+      }
     },
-    [onThreadActivate, threadRef],
+    [isRenaming, onRequestDelete, onStartRename, onThreadActivate, thread.title, threadRef],
   );
   const handleDoubleClick = useCallback(
     (event: ReactMouseEvent) => {
@@ -942,6 +963,8 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
     [isRenaming, onStartRename, thread.title, threadRef],
   );
   const renameCommittedRef = useRef(false);
+  const rowRef = useRef<HTMLDivElement>(null);
+  const deleteRequestPendingRef = useRef(false);
   useEffect(() => {
     if (isRenaming) renameCommittedRef.current = false;
   }, [isRenaming]);
@@ -956,6 +979,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
         event.preventDefault();
         renameCommittedRef.current = true;
         onCancelRename();
+        window.requestAnimationFrame(() => rowRef.current?.focus());
       }
     },
     [onCancelRename, onCommitRename, renamingTitle, thread.title, threadRef],
@@ -1138,6 +1162,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
           <TooltipTrigger
             render={
               <div
+                ref={rowRef}
                 role="button"
                 tabIndex={0}
                 data-testid="sidebar-row-slim"
@@ -1285,6 +1310,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
         <TooltipTrigger
           render={
             <div
+              ref={rowRef}
               role="button"
               tabIndex={0}
               data-testid="sidebar-row-card"
@@ -2954,6 +2980,46 @@ export default function Sidebar() {
     ],
   );
 
+  const requestThreadDelete = useCallback(
+    async (threadRef: ScopedThreadRef, title: string, forceConfirm = false) => {
+      const api = readLocalApi();
+      if (!api) return;
+      if (
+        shouldConfirmThreadDelete({
+          preferenceEnabled: confirmThreadDelete,
+          source: forceConfirm ? "keyboard" : "menu",
+        })
+      ) {
+        const confirmed = await settlePromise(() =>
+          api.dialogs.confirm(
+            [
+              `Delete thread "${title}"?`,
+              "This permanently clears conversation history for this thread.",
+            ].join("\n"),
+            { variant: "destructive" },
+          ),
+        );
+        if (confirmed._tag === "Failure" || !confirmed.value) return;
+      }
+      const result = await deleteThread(threadRef);
+      if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+        const error = squashAtomCommandFailure(result);
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: "Failed to delete thread",
+            description: error instanceof Error ? error.message : "An error occurred.",
+          }),
+        );
+      }
+    },
+    [confirmThreadDelete, deleteThread],
+  );
+  const requestThreadDeleteFromShortcut = useCallback(
+    (threadRef: ScopedThreadRef, title: string) => requestThreadDelete(threadRef, title, true),
+    [requestThreadDelete],
+  );
+
   const handleThreadContextMenu = useCallback(
     (threadRef: ScopedThreadRef, position: { x: number; y: number }) => {
       void (async () => {
@@ -3101,30 +3167,7 @@ export default function Sidebar() {
             }
             return;
           case "delete": {
-            if (confirmThreadDelete) {
-              const confirmed = await settlePromise(() =>
-                api.dialogs.confirm(
-                  [
-                    `Delete thread "${thread.title}"?`,
-                    "This permanently clears conversation history for this thread.",
-                  ].join("\n"),
-                  { variant: "destructive" },
-                ),
-              );
-              if (confirmed._tag === "Failure" || !confirmed.value) return;
-            }
-            const result = await deleteThread(threadRef);
-            if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
-              const error = squashAtomCommandFailure(result);
-              toastManager.add(
-                stackedThreadToast({
-                  type: "error",
-                  title: "Failed to delete thread",
-                  description: error instanceof Error ? error.message : "An error occurred.",
-                }),
-              );
-              return;
-            }
+            await requestThreadDelete(threadRef, thread.title);
             return;
           }
           default:
@@ -3139,13 +3182,12 @@ export default function Sidebar() {
       attemptUnpin,
       attemptUnsettle,
       attemptUnsnooze,
-      confirmThreadDelete,
       copyBranchToClipboard,
       copyPathToClipboard,
-      deleteThread,
       handleMultiSelectContextMenu,
       markThreadUnread,
       projectCwdByKey,
+      requestThreadDelete,
       serverConfigs,
       startThreadRename,
       updateThreadMetadata,
@@ -3604,6 +3646,7 @@ export default function Sidebar() {
                         onThreadClick={handleThreadClick}
                         onThreadActivate={navigateToThread}
                         onStartRename={startThreadRename}
+                        onRequestDelete={requestThreadDeleteFromShortcut}
                         onRenameTitleChange={setRenamingTitle}
                         onCommitRename={commitThreadRename}
                         onCancelRename={cancelThreadRename}
