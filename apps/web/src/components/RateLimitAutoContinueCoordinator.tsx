@@ -1,5 +1,5 @@
 import { scopedThreadKey } from "@t3tools/client-runtime/environment";
-import type { ScopedThreadRef } from "@t3tools/contracts";
+import type { OrchestrationThreadActivity, ScopedThreadRef } from "@t3tools/contracts";
 import { useEffect, useRef } from "react";
 
 import {
@@ -8,8 +8,10 @@ import {
   RATE_LIMIT_AUTO_CONTINUE_TEXT,
   shouldScheduleRateLimitAutoContinue,
 } from "../rateLimitAutoContinue";
-import { useThread, useThreadActivities, useThreadRefs } from "../state/entities";
+import { useThread, useThreadRefs } from "../state/entities";
 import { scheduleThreadMessage, useScheduledMessagesForThread } from "../scheduledMessageStore";
+
+const EMPTY_ACTIVITIES: readonly OrchestrationThreadActivity[] = [];
 
 export function RateLimitAutoContinueCoordinator() {
   const threadRefs = useThreadRefs();
@@ -29,7 +31,7 @@ export function RateLimitAutoContinueCoordinator() {
 function RateLimitAutoContinueThreadWatcher(props: { threadRef: ScopedThreadRef }) {
   const { threadRef } = props;
   const thread = useThread(threadRef);
-  const activities = useThreadActivities(threadRef);
+  const activities = thread?.activities ?? EMPTY_ACTIVITIES;
   const scheduledMessages = useScheduledMessagesForThread(threadRef);
   const processedActivityIdsRef = useRef(new Set<string>());
 

@@ -232,6 +232,31 @@ describe("scheduledMessageStore", () => {
     expect(store.readScheduledMessages()).toEqual([]);
   });
 
+  it("claims only messages that remain pending in shared storage", async () => {
+    const storage = createLocalStorageStub();
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-07-04T11:00:00.000Z"));
+    const store = await loadStoreWithStorage(storage);
+    const item = store.scheduleThreadMessage({
+      environmentId: EnvironmentId.make("environment-local"),
+      threadId: ThreadId.make("thread-1"),
+      text: "hello",
+      outgoingText: "hello",
+      titleSeed: "Thread",
+      modelSelection: {
+        instanceId: ProviderInstanceId.make("codex"),
+        model: "gpt-5.4",
+      },
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      delaySeconds: 30,
+    });
+
+    expect(store.claimScheduledMessageForDispatch(item.id)).toBe(true);
+    expect(store.readScheduledMessages()[0]?.status).toBe("sending");
+    expect(store.claimScheduledMessageForDispatch(item.id)).toBe(false);
+  });
+
   it("detects pending and sending auto-continues for a thread", async () => {
     const storage = createLocalStorageStub();
     vi.useFakeTimers();

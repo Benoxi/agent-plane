@@ -1,19 +1,19 @@
 import type { ScopedThreadRef, ThreadId } from "@t3tools/contracts";
 
-const ERROR_DESCRIPTION_CLAMP_MIN_CHARS = 180;
-
-/** Keep very long errors bounded while showing enough context to diagnose them in-place. */
-export function errorDescriptionClampClass(
-  type: unknown,
-  description: unknown,
-): string | undefined {
-  if (type !== "error" || typeof description !== "string") {
-    return undefined;
+/**
+ * Base UI toast updates omit `undefined` fields, so callers that need to remove
+ * an action must pass a defined `actionProps` whose `children` are empty.
+ * Treat that payload (and missing children) as "no visible action".
+ */
+export function hasVisibleToastAction(actionProps: unknown): boolean {
+  if (actionProps == null || typeof actionProps !== "object") {
+    return false;
   }
-  if (description.length < ERROR_DESCRIPTION_CLAMP_MIN_CHARS) {
-    return undefined;
+  if (!("children" in actionProps)) {
+    return false;
   }
-  return "line-clamp-8";
+  const children = actionProps.children;
+  return children != null && children !== false && children !== "";
 }
 
 export function shouldHideCollapsedToastContent(
