@@ -7,12 +7,13 @@ import { useEffect, useMemo, useRef, useState } from "react";
 
 import { derivePhase } from "../session-logic";
 import {
+  claimScheduledMessageForDispatch,
   markScheduledMessageFailed,
   markScheduledMessagePending,
-  markScheduledMessageSending,
   removeScheduledMessage,
   useScheduledMessages,
 } from "../scheduledMessageStore";
+import { withScheduledMessageDispatchLease } from "../scheduledMessageLease";
 import { useEnvironments } from "../state/environments";
 import { readThreadShell } from "../state/entities";
 import { threadEnvironment } from "../state/threads";
@@ -100,16 +101,25 @@ export function ScheduledMessageCoordinator() {
           continue;
         }
 
-        busyThreadKeys.add(threadKey);
-        inFlightMessageIdsRef.current.add(item.id);
-        markScheduledMessageSending(item.id);
-
-        const startResult = await startThreadTurn({
-          environmentId: item.environmentId,
-          input: createScheduledMessageTurnInput(item),
+        const leasedDispatch = await withScheduledMessageDispatchLease(item.id, async () => {
+          if (!claimScheduledMessageForDispatch(item.id)) {
+            return null;
+          }
+          busyThreadKeys.add(threadKey);
+          inFlightMessageIdsRef.current.add(item.id);
+          try {
+            return await startThreadTurn({
+              environmentId: item.environmentId,
+              input: createScheduledMessageTurnInput(item),
+            });
+          } finally {
+            inFlightMessageIdsRef.current.delete(item.id);
+          }
         });
-
-        inFlightMessageIdsRef.current.delete(item.id);
+        if (!leasedDispatch.acquired || leasedDispatch.value === null) {
+          continue;
+        }
+        const startResult = leasedDispatch.value;
 
         if (startResult._tag === "Success") {
           removeScheduledMessage(item.id);

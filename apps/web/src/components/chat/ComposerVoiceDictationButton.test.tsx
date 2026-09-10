@@ -17,6 +17,10 @@ describe("ComposerVoiceDictationButton", () => {
 
     expect(markup).toContain('aria-label="Start voice dictation"');
     expect(markup).toContain("Dictate message");
+    expect(markup).toContain("border-transparent");
+    expect(markup).toContain("bg-transparent");
+    expect(markup).not.toContain("border-border/70");
+    expect(markup).not.toContain("shadow-xs");
   });
 
   it("renders a stop action while listening", () => {

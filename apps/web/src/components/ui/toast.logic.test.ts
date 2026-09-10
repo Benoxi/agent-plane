@@ -2,19 +2,20 @@ import type { ScopedThreadRef } from "@t3tools/contracts";
 import { assert, describe, it } from "vite-plus/test";
 import {
   buildVisibleToastLayout,
-  errorDescriptionClampClass,
+  hasVisibleToastAction,
   shouldHideCollapsedToastContent,
   shouldRenderThreadScopedToast,
 } from "./toast.logic";
 
-describe("errorDescriptionClampClass", () => {
-  it("shows ordinary and non-error descriptions without truncation", () => {
-    assert.equal(errorDescriptionClampClass("error", "A short error"), undefined);
-    assert.equal(errorDescriptionClampClass("warning", "x".repeat(200)), undefined);
+describe("hasVisibleToastAction", () => {
+  it("treats a labeled action as visible", () => {
+    assert.equal(hasVisibleToastAction({ children: "Update" }), true);
   });
 
-  it("allows eight lines of context for long error descriptions", () => {
-    assert.equal(errorDescriptionClampClass("error", "x".repeat(180)), "line-clamp-8");
+  it("hides an explicit empty action used to clear a previous CTA", () => {
+    assert.equal(hasVisibleToastAction({ children: null }), false);
+    assert.equal(hasVisibleToastAction({ children: "" }), false);
+    assert.equal(hasVisibleToastAction(undefined), false);
   });
 });
 
