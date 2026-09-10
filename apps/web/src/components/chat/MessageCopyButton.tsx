@@ -1,30 +1,35 @@
-import { memo } from "react";
+import { memo, useRef } from "react";
 import { CopyIcon, CheckIcon } from "lucide-react";
 import { Button } from "../ui/button";
 import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
 import { cn } from "~/lib/utils";
+import {
+  ANCHORED_COPY_TOAST_TIMEOUT_MS,
+  showAnchoredCopyErrorToast,
+  showAnchoredCopySuccessToast,
+} from "../ui/anchoredCopyToast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
-
-const ANCHORED_TOAST_TIMEOUT_MS = 1000;
 
 export const MessageCopyButton = memo(function MessageCopyButton({
   text,
+  ariaLabel = "Copy link",
+  tooltipLabel = "Copy to clipboard",
   size = "xs",
   variant = "outline",
   className,
-  ariaLabel = "Copy message",
-  tooltipLabel = "Copy message",
 }: {
   text: string;
+  ariaLabel?: string;
+  tooltipLabel?: string;
   size?: "xs" | "icon-xs";
   variant?: "outline" | "ghost";
   className?: string;
-  ariaLabel?: string;
-  tooltipLabel?: string;
 }) {
+  const ref = useRef<HTMLButtonElement>(null);
   const { copyToClipboard, isCopied } = useCopyToClipboard<void>({
-    target: ariaLabel.toLowerCase(),
-    timeout: ANCHORED_TOAST_TIMEOUT_MS,
+    onCopy: () => showAnchoredCopySuccessToast(ref),
+    onError: (error: Error) => showAnchoredCopyErrorToast(ref, error),
+    timeout: ANCHORED_COPY_TOAST_TIMEOUT_MS,
   });
 
   return (
@@ -35,6 +40,7 @@ export const MessageCopyButton = memo(function MessageCopyButton({
             aria-label={ariaLabel}
             disabled={isCopied}
             onClick={() => copyToClipboard(text)}
+            ref={ref}
             type="button"
             size={size}
             variant={variant}

@@ -7,39 +7,39 @@ import {
   useState,
 } from "react";
 import { ChevronDownIcon, ChevronLeftIcon, Clock3Icon } from "lucide-react";
+import { useEnvironmentIdentificationMode } from "~/hooks/useSettings";
 import { cn } from "~/lib/utils";
+import { StageBackdropButtonArt, useSidebarStageBackdropVariant } from "../SidebarStageBackdrop";
 import { Button } from "../ui/button";
-import { Input } from "../ui/input";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
+import { Input } from "../ui/input";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { Spinner } from "../ui/spinner";
+import { composerFloatingLayerProps } from "./composerEventScope";
 
 const MAX_SCHEDULE_DELAY_SECONDS = 30 * 24 * 60 * 60;
-
-/** Parse a compact, explicit duration such as `30m`, `1h 15m`, or `45s`. */
 export function parseScheduleDurationSeconds(value: string): number | null {
   const normalized = value.trim().toLowerCase().replace(/\s+/gu, "");
-  if (normalized.length === 0) return null;
-
   const parts = [...normalized.matchAll(/(\d+(?:\.\d+)?)([hms])/gu)];
-  if (parts.length === 0 || parts.map((part) => part[0]).join("") !== normalized) return null;
-
-  const seconds = parts.reduce((total, part) => {
-    const amount = Number(part[1]);
-    const multiplier = part[2] === "h" ? 3600 : part[2] === "m" ? 60 : 1;
-    return total + amount * multiplier;
-  }, 0);
-  if (!Number.isFinite(seconds) || seconds <= 0 || seconds > MAX_SCHEDULE_DELAY_SECONDS) {
-    return null;
-  }
-  return Math.ceil(seconds);
+  if (!parts.length || parts.map((part) => part[0]).join("") !== normalized) return null;
+  const seconds = parts.reduce(
+    (total, part) => total + Number(part[1]) * (part[2] === "h" ? 3600 : part[2] === "m" ? 60 : 1),
+    0,
+  );
+  return Number.isFinite(seconds) && seconds > 0 && seconds <= MAX_SCHEDULE_DELAY_SECONDS
+    ? Math.ceil(seconds)
+    : null;
 }
-
 export function formatScheduledLocalTime(delaySeconds: number, nowMs = Date.now()): string {
-  return new Intl.DateTimeFormat(undefined, {
-    dateStyle: "medium",
-    timeStyle: "short",
-  }).format(new Date(nowMs + delaySeconds * 1000));
+  return new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" }).format(
+    new Date(nowMs + delaySeconds * 1000),
+  );
+}
+export function preventScheduledMessageSubmitPropagation(
+  event: Pick<FormEvent<HTMLFormElement>, "preventDefault" | "stopPropagation">,
+) {
+  event.preventDefault();
+  event.stopPropagation();
 }
 
 interface PendingActionState {
@@ -62,16 +62,19 @@ interface ComposerPrimaryActionsProps {
   isEnvironmentUnavailable: boolean;
   isPreparingWorktree: boolean;
   hasSendableContent: boolean;
-  scheduleDisabledReason: string | null;
-  scheduleQuotaContext?: ReactNode;
   preserveComposerFocusOnPointerDown?: boolean;
+  /** Enter-to-send is disabled on mobile viewports, where stop would otherwise
+   * be the only primary action and a running turn could not be steered. */
+  showSendWhileRunning?: boolean;
+  scheduleDisabledReason?: string | null;
+  scheduleQuotaContext?: ReactNode;
+  onSchedule?: (delaySeconds: number) => void | Promise<void>;
   onPreviousPendingQuestion: () => void;
   onInterrupt: () => void;
   onImplementPlanInNewThread: () => void;
-  onSchedule: (delaySeconds: number) => void | Promise<void>;
 }
 
-export const formatPendingPrimaryActionLabel = (input: {
+const formatPendingPrimaryActionLabel = (input: {
   compact: boolean;
   isLastQuestion: boolean;
   isResponding: boolean;
@@ -87,15 +90,6 @@ export const formatPendingPrimaryActionLabel = (input: {
     return "Next question";
   }
   return input.questionIndex > 0 ? "Submit answers" : "Submit answer";
-};
-
-export const preventScheduledMessageSubmitPropagation = (
-  event: Pick<FormEvent<HTMLFormElement>, "preventDefault" | "stopPropagation">,
-) => {
-  event.preventDefault();
-  // The popover is portalled out of the composer form in the DOM, but React
-  // events still bubble through the component tree.
-  event.stopPropagation();
 };
 
 const preventPointerFocus: PointerEventHandler<HTMLElement> = (event) => {
@@ -114,40 +108,43 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
   isEnvironmentUnavailable,
   isPreparingWorktree,
   hasSendableContent,
-  scheduleDisabledReason,
-  scheduleQuotaContext,
   preserveComposerFocusOnPointerDown = false,
+  showSendWhileRunning = false,
   onPreviousPendingQuestion,
   onInterrupt,
   onImplementPlanInNewThread,
-  onSchedule,
+  scheduleDisabledReason = "Scheduling is unavailable here.",
+  scheduleQuotaContext,
+  onSchedule = () => undefined,
 }: ComposerPrimaryActionsProps) {
   const pointerFocusProps = preserveComposerFocusOnPointerDown
     ? { onPointerDown: preventPointerFocus }
     : undefined;
+  const environmentIdentificationMode = useEnvironmentIdentificationMode();
+  const isSendDisabled = sendDisabledReason !== null;
+  const stageBackdropVariant = useSidebarStageBackdropVariant(
+    environmentIdentificationMode === "artwork",
+  );
   const [scheduleOpen, setScheduleOpen] = useState(false);
   const [scheduleDuration, setScheduleDuration] = useState("30m");
   const [scheduleNowMs, setScheduleNowMs] = useState(() => Date.now());
-
-  useEffect(() => {
-    if (!scheduleOpen) {
-      setScheduleDuration("30m");
-    }
-  }, [scheduleOpen]);
   useEffect(() => {
     if (!scheduleOpen) return;
     setScheduleNowMs(Date.now());
-    const intervalId = window.setInterval(() => setScheduleNowMs(Date.now()), 1_000);
-    return () => window.clearInterval(intervalId);
+    const interval = window.setInterval(() => setScheduleNowMs(Date.now()), 1_000);
+    return () => window.clearInterval(interval);
   }, [scheduleOpen]);
-  const isSendDisabled = sendDisabledReason !== null;
 
   const renderStopGenerationButton = (insidePendingAction: boolean) => (
     <button
       type="button"
       className={cn(
         "flex cursor-pointer items-center justify-center rounded-full bg-destructive/90 text-white shadow-xs shadow-destructive/24 inset-shadow-[0_1px_--theme(--color-white/16%)] transition-all duration-150 hover:bg-destructive hover:scale-105 active:inset-shadow-[0_1px_--theme(--color-black/8%)] active:shadow-none",
-        insidePendingAction ? "size-8 sm:size-7" : "size-8 sm:h-8 sm:w-8",
+        insidePendingAction
+          ? "size-8 sm:size-7"
+          : showSendWhileRunning && hasSendableContent
+            ? "size-9 sm:size-8"
+            : "size-8 sm:h-8 sm:w-8",
       )}
       {...pointerFocusProps}
       onClick={onInterrupt}
@@ -214,10 +211,6 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
     );
   }
 
-  if (isRunning) {
-    return renderStopGenerationButton(false);
-  }
-
   if (showPlanFollowUpPrompt) {
     if (promptHasText) {
       return (
@@ -262,7 +255,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
           >
             <ChevronDownIcon className="size-3.5" />
           </MenuTrigger>
-          <MenuPopup align="end" side="top">
+          <MenuPopup align="end" side="top" {...composerFloatingLayerProps}>
             <MenuItem
               disabled={isSendBusy || isSendDisabled || isConnecting || isEnvironmentUnavailable}
               onClick={() => void onImplementPlanInNewThread()}
@@ -275,141 +268,132 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
     );
   }
 
-  const parsedDelaySeconds = parseScheduleDurationSeconds(scheduleDuration);
-  const scheduleDisabled = scheduleDisabledReason !== null;
+  const sendButton = (
+    <button
+      type="submit"
+      className={cn(
+        "relative isolate flex h-9 w-9 items-center justify-center overflow-hidden rounded-full shadow-xs transition-all duration-150 enabled:cursor-pointer enabled:inset-shadow-[0_1px_--theme(--color-white/16%)] hover:scale-105 active:inset-shadow-[0_1px_--theme(--color-black/8%)] active:shadow-none disabled:pointer-events-none disabled:opacity-30 disabled:shadow-none disabled:hover:scale-100 sm:h-8 sm:w-8",
+        stageBackdropVariant
+          ? "bg-transparent text-white enabled:shadow-black/24 enabled:hover:brightness-110"
+          : "bg-message-action text-message-action-foreground enabled:shadow-message-action/24 hover:bg-message-action-hover",
+      )}
+      {...pointerFocusProps}
+      disabled={
+        isSendBusy ||
+        isSendDisabled ||
+        isConnecting ||
+        isEnvironmentUnavailable ||
+        !hasSendableContent
+      }
+      aria-label={
+        isEnvironmentUnavailable
+          ? "Environment disconnected"
+          : sendDisabledReason
+            ? sendDisabledReason
+            : isConnecting
+              ? "Connecting"
+              : isPreparingWorktree
+                ? "Preparing worktree"
+                : isSendBusy
+                  ? "Sending"
+                  : "Send message"
+      }
+    >
+      {stageBackdropVariant ? (
+        <span className="absolute inset-0 -z-10" aria-hidden="true">
+          <StageBackdropButtonArt variant={stageBackdropVariant} />
+        </span>
+      ) : null}
+      {isConnecting || isSendBusy ? (
+        <Spinner className="size-3.5" aria-hidden="true" />
+      ) : (
+        <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">
+          <path
+            d="M7 11.5V2.5M7 2.5L3 6.5M7 2.5L11 6.5"
+            stroke="currentColor"
+            strokeWidth="1.8"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+        </svg>
+      )}
+    </button>
+  );
 
-  return (
-    <div className="flex items-center justify-end gap-2">
-      <Popover open={scheduleOpen} onOpenChange={setScheduleOpen}>
-        <PopoverTrigger
-          render={
-            <button
-              type="button"
-              className="flex h-9 w-9 items-center justify-center rounded-full border border-border/70 bg-card text-muted-foreground shadow-xs transition-colors duration-150 hover:bg-accent hover:text-foreground disabled:pointer-events-none disabled:opacity-30 sm:h-8 sm:w-8"
-              {...pointerFocusProps}
-              disabled={scheduleDisabled}
-              aria-label="Schedule message"
-              title={scheduleDisabledReason ?? "Schedule message"}
-            />
-          }
-        >
-          <Clock3Icon className="size-3.5" />
-        </PopoverTrigger>
-        <PopoverPopup side="top" align="end" sideOffset={8} className="w-72 p-3">
-          <form
-            className="space-y-3"
-            onSubmit={(event) => {
-              preventScheduledMessageSubmitPropagation(event);
-              if (parsedDelaySeconds === null) {
-                return;
-              }
-              void onSchedule(parsedDelaySeconds);
-              setScheduleOpen(false);
-            }}
-          >
-            <div className="space-y-1">
-              <div className="font-medium text-sm">Schedule send</div>
-              <div className="text-muted-foreground text-xs">
-                Queue this message using the current web session scheduler.
-              </div>
-            </div>
-            <label className="block space-y-1">
-              <span className="text-muted-foreground text-xs">Delay</span>
-              <Input
-                nativeInput
-                type="text"
-                inputMode="text"
-                placeholder="30m"
-                value={scheduleDuration}
-                onChange={(event) => {
-                  setScheduleDuration(event.currentTarget.value);
-                }}
-                autoFocus
-              />
-              <span className="block text-[11px] text-muted-foreground">
-                Use h, m, or s — for example 1h 30m.
-              </span>
-            </label>
-            <div className="flex gap-1.5" aria-label="Quick schedule presets">
-              {["5m", "30m", "1h"].map((preset) => (
-                <Button
-                  key={preset}
-                  type="button"
-                  size="xs"
-                  variant="outline"
-                  onClick={() => setScheduleDuration(preset)}
-                >
-                  {preset}
-                </Button>
-              ))}
-            </div>
-            <div className="rounded-md border border-border/60 bg-muted/25 px-2.5 py-2 text-xs">
-              <p className="text-foreground">
-                {parsedDelaySeconds === null
-                  ? "Enter a future delay up to 30 days."
-                  : `Sends ${formatScheduledLocalTime(parsedDelaySeconds, scheduleNowMs)} (local time)`}
-              </p>
-              {scheduleQuotaContext}
-            </div>
-            <div className="flex items-center justify-end gap-2">
+  if (!isRunning) {
+    const delaySeconds = parseScheduleDurationSeconds(scheduleDuration);
+    return (
+      <div className="flex items-center gap-2">
+        <Popover open={scheduleOpen} onOpenChange={setScheduleOpen}>
+          <PopoverTrigger
+            render={
               <Button
                 type="button"
-                size="sm"
+                size="icon-sm"
                 variant="outline"
-                onClick={() => setScheduleOpen(false)}
-              >
-                Cancel
-              </Button>
-              <Button type="submit" size="sm" disabled={parsedDelaySeconds === null}>
+                aria-label="Schedule message"
+                disabled={scheduleDisabledReason !== null}
+              />
+            }
+          >
+            <Clock3Icon className="size-3.5" />
+          </PopoverTrigger>
+          <PopoverPopup side="top" align="end" className="w-72 p-3" {...composerFloatingLayerProps}>
+            <form
+              className="space-y-3"
+              onSubmit={(event) => {
+                preventScheduledMessageSubmitPropagation(event);
+                if (delaySeconds === null) return;
+                void onSchedule(delaySeconds);
+                setScheduleOpen(false);
+              }}
+            >
+              <div>
+                <div className="font-medium text-sm">Schedule send</div>
+                <div className="text-muted-foreground text-xs">
+                  Uses the current web-session scheduler.
+                </div>
+              </div>
+              <Input
+                nativeInput
+                value={scheduleDuration}
+                onChange={(event) => setScheduleDuration(event.currentTarget.value)}
+                placeholder="30m"
+              />
+              <div className="flex gap-1.5">
+                {["5m", "30m", "1h"].map((preset) => (
+                  <Button
+                    key={preset}
+                    type="button"
+                    size="xs"
+                    variant="outline"
+                    onClick={() => setScheduleDuration(preset)}
+                  >
+                    {preset}
+                  </Button>
+                ))}
+              </div>
+              <div className="text-xs">
+                {delaySeconds === null
+                  ? "Enter a delay up to 30 days (for example 1h 30m)."
+                  : `Sends ${formatScheduledLocalTime(delaySeconds, scheduleNowMs)} (local time)`}
+                {scheduleQuotaContext}
+              </div>
+              <Button type="submit" size="sm" disabled={delaySeconds === null}>
                 Schedule
               </Button>
-            </div>
-          </form>
-        </PopoverPopup>
-      </Popover>
+            </form>
+          </PopoverPopup>
+        </Popover>
+        {sendButton}
+      </div>
+    );
+  }
 
-      <button
-        type="submit"
-        className={cn(
-          "relative isolate flex h-9 w-9 items-center justify-center overflow-hidden rounded-full text-message-action-foreground shadow-xs transition-all duration-150 enabled:cursor-pointer enabled:inset-shadow-[0_1px_--theme(--color-white/16%)] hover:scale-105 active:inset-shadow-[0_1px_--theme(--color-black/8%)] active:shadow-none disabled:pointer-events-none disabled:opacity-30 disabled:shadow-none disabled:hover:scale-100 sm:h-8 sm:w-8",
-          "bg-message-action enabled:shadow-message-action/24 hover:bg-message-action-hover",
-        )}
-        {...pointerFocusProps}
-        disabled={
-          isSendBusy ||
-          isSendDisabled ||
-          isConnecting ||
-          isEnvironmentUnavailable ||
-          !hasSendableContent
-        }
-        aria-label={
-          isEnvironmentUnavailable
-            ? "Environment disconnected"
-            : sendDisabledReason
-              ? sendDisabledReason
-              : isConnecting
-                ? "Connecting"
-                : isPreparingWorktree
-                  ? "Preparing worktree"
-                  : isSendBusy
-                    ? "Sending"
-                    : "Send message"
-        }
-      >
-        {isConnecting || isSendBusy ? (
-          <Spinner className="size-3.5" aria-hidden="true" />
-        ) : (
-          <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">
-            <path
-              d="M7 11.5V2.5M7 2.5L3 6.5M7 2.5L11 6.5"
-              stroke="currentColor"
-              strokeWidth="1.8"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            />
-          </svg>
-        )}
-      </button>
-    </div>
+  return (
+    <>
+      {renderStopGenerationButton(false)}
+      {showSendWhileRunning && hasSendableContent ? sendButton : null}
+    </>
   );
 });

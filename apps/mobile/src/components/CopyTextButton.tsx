@@ -2,7 +2,7 @@ import { SymbolView } from "../components/AppSymbol";
 import { memo, useEffect, useRef, useState } from "react";
 import { Alert, Pressable, type ColorValue } from "react-native";
 
-import { copyTextWithHaptic } from "../lib/copyTextWithHaptic";
+import { tryCopyTextWithHaptic } from "../lib/copyTextWithHaptic";
 
 const COPY_FEEDBACK_DURATION_MS = 1200;
 
@@ -35,7 +35,7 @@ export const CopyTextButton = memo(function CopyTextButton(props: {
       disabled={props.text.length === 0}
       hitSlop={8}
       onPress={() => {
-        void copyTextWithHaptic(props.text, { target: "message" }).then((didCopy) => {
+        void tryCopyTextWithHaptic(props.text, { target: "message" }).then((didCopy) => {
           if (!didCopy) {
             setCopied(false);
             Alert.alert(

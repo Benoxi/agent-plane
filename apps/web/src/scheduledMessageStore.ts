@@ -313,6 +313,27 @@ export function markScheduledMessageSending(messageId: string) {
   }));
 }
 
+/** Refreshes from shared browser storage and claims a still-pending item. */
+export function claimScheduledMessageForDispatch(messageId: string): boolean {
+  ensureHydrated();
+  const persistedState = readPersistedState();
+  const item = persistedState.items.find((candidate) => candidate.id === messageId);
+  if (item?.status !== "pending") {
+    replaceState(persistedState, { persist: false });
+    return false;
+  }
+  replaceState({
+    items: sortItems(
+      persistedState.items.map((candidate) =>
+        candidate.id === messageId
+          ? { ...candidate, status: "sending" as const, lastError: undefined }
+          : candidate,
+      ),
+    ),
+  });
+  return true;
+}
+
 export function markScheduledMessagePending(messageId: string) {
   updateScheduledMessage(messageId, (item) => ({
     ...item,

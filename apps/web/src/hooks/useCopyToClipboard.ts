@@ -42,6 +42,7 @@ export async function verifyClipboardWriteBestEffort(
 ): Promise<ClipboardWriteVerification> {
   if (
     typeof document === "undefined" ||
+    typeof document.hasFocus !== "function" ||
     !document.hasFocus() ||
     typeof navigator === "undefined" ||
     !navigator.clipboard?.readText ||
@@ -61,6 +62,52 @@ export async function verifyClipboardWriteBestEffort(
   }
 }
 
+export class ClipboardReadUnavailableError extends Schema.TaggedErrorClass<ClipboardReadUnavailableError>()(
+  "ClipboardReadUnavailableError",
+  { target: Schema.String },
+) {
+  override get message(): string {
+    return `Clipboard API is unavailable while reading ${this.target}.`;
+  }
+}
+
+export class ClipboardReadError extends Schema.TaggedErrorClass<ClipboardReadError>()(
+  "ClipboardReadError",
+  { target: Schema.String, cause: Schema.Defect() },
+) {
+  override get message(): string {
+    return `Failed to read ${this.target} from the clipboard.`;
+  }
+}
+
+/** Copy fallback for remote web pages served over plain HTTP. */
+function writeTextWithExecCommand(value: string): boolean {
+  if (typeof document === "undefined" || typeof document.execCommand !== "function") return false;
+  const textarea = document.createElement("textarea");
+  textarea.value = value;
+  textarea.setAttribute("readonly", "");
+  textarea.setAttribute("aria-hidden", "true");
+  textarea.style.position = "fixed";
+  textarea.style.top = "0";
+  textarea.style.left = "0";
+  textarea.style.opacity = "0";
+  textarea.style.fontSize = "16px";
+  const previouslyFocused = document.activeElement;
+  document.body.appendChild(textarea);
+  try {
+    textarea.focus({ preventScroll: true });
+    textarea.select();
+    textarea.setSelectionRange(0, value.length);
+    return document.execCommand("copy");
+  } catch {
+    return false;
+  } finally {
+    textarea.remove();
+    const restoreFocus = (previouslyFocused as { focus?: unknown } | null)?.focus;
+    if (typeof restoreFocus === "function") restoreFocus.call(previouslyFocused);
+  }
+}
+
 export async function writeTextToClipboard(
   value: string,
   target = "text",
@@ -77,6 +124,15 @@ export async function writeTextToClipboard(
     typeof navigator === "undefined" ||
     !navigator.clipboard?.writeText
   ) {
+    if (typeof window !== "undefined" && writeTextWithExecCommand(value)) {
+      clipboardFeedbackController.succeed(
+        operationId,
+        target,
+        announceSuccess,
+        clipboardDedupeKey(target, value),
+      );
+      return true;
+    }
     const error = new ClipboardApiUnavailableError({
       target,
     });
@@ -101,6 +157,27 @@ export async function writeTextToClipboard(
     });
     clipboardFeedbackController.fail(operationId, target, error, announceFailure);
     throw error;
+  }
+}
+
+export async function readTextFromClipboard(target = "text"): Promise<string> {
+  if (
+    typeof window === "undefined" ||
+    typeof navigator === "undefined" ||
+    !navigator.clipboard?.readText
+  ) {
+    throw new ClipboardReadUnavailableError({
+      target,
+    });
+  }
+
+  try {
+    return await navigator.clipboard.readText();
+  } catch (cause) {
+    throw new ClipboardReadError({
+      target,
+      cause,
+    });
   }
 }
 
