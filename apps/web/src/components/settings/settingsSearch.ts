@@ -105,6 +105,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["transparent transparency solid menus dialogs composer"],
   },
   {
+    id: "chat-width",
+    title: "Chat width",
+    to: "/settings/appearance",
+    searchTerms: ["wide full width column layout messages composer monitor"],
+  },
+  {
     id: "panel-animations",
     title: "Panel animations",
     to: "/settings/appearance",
