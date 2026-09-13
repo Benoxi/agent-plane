@@ -1934,6 +1934,18 @@ code {
   }
 }
 
+/* Chat timeline and composer column width, set from the Chat width setting. */
+:root {
+  --chat-max-width: 48rem;
+}
+
+:root[data-chat-width="wide"] {
+  --chat-max-width: 72rem;
+}
+
+:root[data-chat-width="full"] {
+  --chat-max-width: 100%;
+}
 .diff-render-surface diffs-container {
   border: 0;
   border-radius: 0;
