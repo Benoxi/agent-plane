@@ -229,6 +229,9 @@ export function planSidebarThreadDrop(input: {
   readonly activeOrder: readonly string[];
   readonly activeKeysById: ReadonlyMap<string, string | null | undefined>;
   readonly activeReorderableKeys?: ReadonlySet<string>;
+  /** Recency-sorted clients reject Active-to-Active placement while still
+      allowing unpin, un-settle, and wake drops back into Active. */
+  readonly allowActiveReorder?: boolean;
 }): SidebarThreadDropPlan {
   const {
     activeKey,
@@ -242,6 +245,7 @@ export function planSidebarThreadDrop(input: {
     activeOrder,
     activeKeysById,
     activeReorderableKeys,
+    allowActiveReorder = true,
   } = input;
   if (input.supportsSettlement === false && (target.section === "settled" || activeSettled)) {
     return { kind: "none" };
@@ -249,6 +253,9 @@ export function planSidebarThreadDrop(input: {
   switch (target.section) {
     case "active": {
       const order = target.activeOrder;
+      if (activeSection === "active" && !allowActiveReorder) {
+        return { kind: "none" };
+      }
       if (
         activeSection === "active" &&
         order.length === activeOrder.length &&
@@ -256,11 +263,13 @@ export function planSidebarThreadDrop(input: {
       ) {
         return { kind: "none" };
       }
-      const assignments = planPinnedReorder({
-        orderedIds: order,
-        keysById: activeKeysById,
-        movedId: activeKey,
-      });
+      const assignments = allowActiveReorder
+        ? planPinnedReorder({
+            orderedIds: order,
+            keysById: activeKeysById,
+            movedId: activeKey,
+          })
+        : [];
       if (activeReorderableKeys && assignments.some(({ id }) => !activeReorderableKeys.has(id))) {
         return { kind: "none" };
       }
@@ -884,6 +893,15 @@ function firstValidTimestamp(
 }
 
 export { sortActiveThreadsByOrderKey as sortThreadsForSidebar } from "@t3tools/client-runtime/state/thread-sort";
+
+/** Current web sidebar ordering follows the user's configured recency rule.
+ * Active-order keys belong to the manual arrangement model and must not
+ * override a newer user message when recency sorting is selected. */
+export function sortThreadsByActivityForSidebar<
+  T extends { readonly id: string } & ThreadSortInput,
+>(threads: readonly T[], sortOrder: SidebarThreadSortOrder): T[] {
+  return sortThreads(threads, sortOrder);
+}
 
 // Pinned-reorder key math and the keyed sort live in client-runtime
 // (state/thread-sort) so web and mobile compute identical pinned orders.
