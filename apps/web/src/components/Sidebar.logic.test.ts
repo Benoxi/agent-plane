@@ -41,6 +41,7 @@ import {
   sidebarMarkerId,
   sidebarListItemId,
   sortPinnedThreadsForSidebar,
+  sortThreadsByActivityForSidebar,
   sortThreadsForSidebar,
   sortProjectsForSidebar,
   sortScopedProjectsForSidebar,
@@ -963,6 +964,57 @@ describe("sortThreadsForSidebar", () => {
   });
 });
 
+describe("sortThreadsByActivityForSidebar", () => {
+  const thread = (input: {
+    id: string;
+    createdAt: string;
+    updatedAt?: string;
+    latestUserMessageAt?: string | null;
+  }) => ({
+    id: input.id,
+    createdAt: input.createdAt,
+    updatedAt: input.updatedAt ?? input.createdAt,
+    latestUserMessageAt: input.latestUserMessageAt ?? null,
+  });
+
+  it("moves the thread with the latest user activity to the top", () => {
+    const sorted = sortThreadsByActivityForSidebar(
+      [
+        thread({
+          id: "recent-assistant-update",
+          createdAt: "2026-03-09T08:00:00.000Z",
+          updatedAt: "2026-03-09T13:00:00.000Z",
+          latestUserMessageAt: "2026-03-09T09:00:00.000Z",
+        }),
+        thread({
+          id: "recent-user-message",
+          createdAt: "2026-03-09T10:00:00.000Z",
+          latestUserMessageAt: "2026-03-09T12:00:00.000Z",
+        }),
+      ],
+      "updated_at",
+    );
+
+    expect(sorted.map(({ id }) => id)).toEqual(["recent-user-message", "recent-assistant-update"]);
+  });
+
+  it("falls back to creation time without letting metadata updates elevate a thread", () => {
+    const sorted = sortThreadsByActivityForSidebar(
+      [
+        thread({
+          id: "older-renamed",
+          createdAt: "2026-03-09T08:00:00.000Z",
+          updatedAt: "2026-03-09T14:00:00.000Z",
+        }),
+        thread({ id: "newer", createdAt: "2026-03-09T10:00:00.000Z" }),
+      ],
+      "updated_at",
+    );
+
+    expect(sorted.map(({ id }) => id)).toEqual(["newer", "older-renamed"]);
+  });
+});
+
 describe("pinOrderKeyBetween", () => {
   it("produces keys that sort between their bounds", () => {
     const middle = pinOrderKeyBetween(null, null)!;
@@ -1309,6 +1361,44 @@ describe("planSidebarThreadDrop", () => {
     if (result.kind !== "move-active") return;
     const key = result.assignments[0]!.orderKey;
     expect(key > "f" && key < "m").toBe(true);
+  });
+
+  it.each([
+    { key: "p2", section: "pinned" as const, unpin: true, unsettle: false, unsnooze: false },
+    { key: "s1", section: "settled" as const, unpin: false, unsettle: true, unsnooze: false },
+    { key: "z1", section: "snoozed" as const, unpin: false, unsettle: false, unsnooze: true },
+  ])("allows $section recovery into recency-sorted Active", (source) => {
+    expect(
+      plan({
+        activeKey: source.key,
+        activeSection: source.section,
+        allowActiveReorder: false,
+        activeReorderableKeys: new Set(),
+        target: {
+          section: "active",
+          pinnedOrder: [],
+          activeOrder: [source.key, "a1", "a2", "a3"],
+        },
+      }),
+    ).toEqual({
+      kind: "move-active",
+      order: [source.key, "a1", "a2", "a3"],
+      assignments: [],
+      unpin: source.unpin,
+      unsettle: source.unsettle,
+      unsnooze: source.unsnooze,
+    });
+  });
+
+  it("rejects Active-to-Active dragging when recency controls the order", () => {
+    expect(
+      plan({
+        activeKey: "a2",
+        activeSection: "active",
+        allowActiveReorder: false,
+        target: { section: "active", pinnedOrder: [], activeOrder: ["a2", "a1", "a3"] },
+      }),
+    ).toEqual({ kind: "none" });
   });
 
   it.each([
