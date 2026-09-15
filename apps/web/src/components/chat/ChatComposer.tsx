@@ -100,6 +100,7 @@ import {
   type ComposerTasksProgress,
 } from "./ComposerTasksBadge";
 import { ComposerActivityRow } from "./ComposerActivityStatus";
+import { ScheduledMessagePreview } from "./ScheduledMessagePreview";
 import type { ThreadSyncPhase } from "../../threadSync";
 import { ComposerBanner } from "./ComposerBanner";
 import { ComposerSurface } from "./ComposerSurface";
@@ -1084,8 +1085,6 @@ const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryActions(
   scheduleDisabledReason: string | null;
   scheduleQuotaContext?: ReactNode;
   onScheduleMessage: (delaySeconds: number) => void | Promise<void>;
-  scheduledMessages: ReadonlyArray<ScheduledMessage>;
-  onRemoveScheduledMessage: (messageId: string) => void;
   preserveComposerFocusOnPointerDown?: boolean;
   showSendWhileRunning?: boolean;
   onPreviousPendingQuestion: () => void;
@@ -1130,26 +1129,6 @@ const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryActions(
         onInterrupt={props.onInterrupt}
         onImplementPlanInNewThread={props.onImplementPlanInNewThread}
       />
-      {props.scheduledMessages.map((message) => (
-        <div
-          key={message.id}
-          className="flex max-w-72 items-center gap-2 rounded-md border px-2 py-1 text-xs"
-        >
-          <span className="min-w-0 flex-1 truncate">
-            Scheduled {new Date(message.scheduledFor).toLocaleString()}: {message.text}
-          </span>
-          <Button
-            type="button"
-            size="icon-xs"
-            variant="ghost"
-            disabled={message.status === "sending"}
-            onClick={() => props.onRemoveScheduledMessage(message.id)}
-            aria-label="Cancel scheduled message"
-          >
-            <XIcon className="size-3" />
-          </Button>
-        </div>
-      ))}
     </>
   );
 });
@@ -5642,6 +5621,23 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
               message={providerInputSubmissionError ?? composerSubmissionError}
             />
 
+            {scheduledMessages.length > 0 ? (
+              <div
+                aria-label="Scheduled messages"
+                className="flex max-h-40 min-w-0 flex-col gap-1 overflow-y-auto px-3 pb-2 sm:px-4"
+              >
+                {scheduledMessages.map((message) => (
+                  <ScheduledMessagePreview
+                    key={message.id}
+                    text={message.text}
+                    scheduledFor={message.scheduledFor}
+                    sending={message.status === "sending"}
+                    onCancel={() => onRemoveScheduledMessage(message.id)}
+                  />
+                ))}
+              </div>
+            ) : null}
+
             {/* Bottom toolbar */}
             {isComposerCollapsedMobile || isComposerApprovalState ? null : (
               <div
@@ -5740,8 +5736,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                         <ProviderUsageScheduleContext provider={selectedProviderEntry.snapshot} />
                       ) : undefined
                     }
-                    scheduledMessages={scheduledMessages}
-                    onRemoveScheduledMessage={onRemoveScheduledMessage}
                     preserveComposerFocusOnPointerDown={isMobileViewport || isComposerResting}
                     showSendWhileRunning={isMobileViewport}
                     onPreviousPendingQuestion={onPreviousActivePendingUserInputQuestion}
