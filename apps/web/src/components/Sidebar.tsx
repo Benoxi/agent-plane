@@ -2113,7 +2113,7 @@ export default function Sidebar() {
   const projectOrder = useUiStateStore((store) => store.projectOrder);
   const threads = useThreadShells();
   const router = useRouter();
-  const { isMobile, setOpenMobile } = useSidebar();
+  const { closeMobileSidebar } = useSidebar();
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const confirmThreadDelete = useClientSettings((s) => s.confirmThreadDelete);
   const confirmThreadArchive = useClientSettings((s) => s.confirmThreadArchive);
@@ -2483,15 +2483,15 @@ export default function Sidebar() {
 
   const openProjectSettings = useCallback(
     (projectGroup: SidebarProjectSnapshot) => {
-      if (isMobile) {
-        setOpenMobile(false);
-      }
-      void router.navigate({
-        to: "/projects/$projectKey",
-        params: { projectKey: projectGroup.projectKey },
-      });
+      closeMobileSidebar(
+        () =>
+          void router.navigate({
+            to: "/projects/$projectKey",
+            params: { projectKey: projectGroup.projectKey },
+          }),
+      );
     },
-    [isMobile, router, setOpenMobile],
+    [closeMobileSidebar, router],
   );
   // Safari can send a click after Ctrl+click opens settings. Ignore that one
   // selection, then clear the guard when the picker opens again.
@@ -2848,15 +2848,15 @@ export default function Sidebar() {
         clearSelection();
       }
       setSelectionAnchor(scopedThreadKey(threadRef));
-      if (isMobile) {
-        setOpenMobile(false);
-      }
-      void router.navigate({
-        to: "/$environmentId/$threadId",
-        params: buildThreadRouteParams(threadRef),
-      });
+      closeMobileSidebar(
+        () =>
+          void router.navigate({
+            to: "/$environmentId/$threadId",
+            params: buildThreadRouteParams(threadRef),
+          }),
+      );
     },
-    [clearSelection, isMobile, router, setOpenMobile, setSelectionAnchor],
+    [clearSelection, closeMobileSidebar, router, setSelectionAnchor],
   );
 
   const navigateToDraft = useCallback(
@@ -2866,12 +2866,11 @@ export default function Sidebar() {
       // instead of ranging from a row that is no longer the context.
       // (clearSelection no-ops when there is nothing to clear.)
       clearSelection();
-      if (isMobile) {
-        setOpenMobile(false);
-      }
-      void router.navigate({ to: "/draft/$draftId", params: { draftId } });
+      closeMobileSidebar(
+        () => void router.navigate({ to: "/draft/$draftId", params: { draftId } }),
+      );
     },
-    [clearSelection, isMobile, router, setOpenMobile],
+    [clearSelection, closeMobileSidebar, router],
   );
 
   const clearThreadSearch = useCallback(() => {
@@ -4308,19 +4307,20 @@ export default function Sidebar() {
       // directly in the current project even with several projects, skipping
       // the palette picker.
       if (shouldCreateNewThreadInCurrentProject(event?.shiftKey ?? false, projectGroups.length)) {
-        if (isMobile) setOpenMobile(false);
-        void startNewThreadFromContext({
-          activeDraftThread: newThreadContext.activeDraftThread,
-          activeThread: newThreadContext.activeThread ?? undefined,
-          defaultProjectRef: newThreadContext.defaultProjectRef,
-          handleNewThread: newThreadContext.handleNewThread,
-        });
+        closeMobileSidebar(
+          () =>
+            void startNewThreadFromContext({
+              activeDraftThread: newThreadContext.activeDraftThread,
+              activeThread: newThreadContext.activeThread ?? undefined,
+              defaultProjectRef: newThreadContext.defaultProjectRef,
+              handleNewThread: newThreadContext.handleNewThread,
+            }),
+        );
         return;
       }
-      if (isMobile) setOpenMobile(false);
-      openCommandPalette({ open: "new-thread-in" });
+      closeMobileSidebar(() => openCommandPalette({ open: "new-thread-in" }));
     },
-    [isMobile, newThreadContext, projectGroups.length, setOpenMobile],
+    [closeMobileSidebar, newThreadContext, projectGroups.length],
   );
 
   // The button mirrors chat.new: in multi-project setups both route through

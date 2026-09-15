@@ -1134,7 +1134,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
     (settings) => settings.sidebarThreadPreviewCount,
   );
   const router = useRouter();
-  const { isMobile, setOpenMobile } = useSidebar();
+  const { closeMobileSidebar } = useSidebar();
   const markThreadUnread = useUiStateStore((state) => state.markThreadUnread);
   const setProjectExpanded = useUiStateStore((state) => state.setProjectExpanded);
   const toggleThreadSelection = useThreadSelectionStore((state) => state.toggleThread);
@@ -1684,11 +1684,13 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
         };
 
         actionHandlers.set("project-settings", () => {
-          if (isMobile) setOpenMobile(false);
-          void router.navigate({
-            to: "/projects/$projectKey",
-            params: { projectKey: project.projectKey },
-          });
+          closeMobileSidebar(
+            () =>
+              void router.navigate({
+                to: "/projects/$projectKey",
+                params: { projectKey: project.projectKey },
+              }),
+          );
         });
 
         const clicked = await api.contextMenu.show(
@@ -1717,14 +1719,13 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
     [
       copyPathToClipboard,
       handleRemoveProject,
-      isMobile,
+      closeMobileSidebar,
       openProjectGroupingDialog,
       openProjectRenameDialog,
       project.groupedProjectCount,
       project.memberProjects,
       project.projectKey,
       router,
-      setOpenMobile,
       suppressProjectClickForContextMenuRef,
     ],
   );
@@ -1735,15 +1736,15 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
         clearSelection();
       }
       setSelectionAnchor(scopedThreadKey(threadRef));
-      if (isMobile) {
-        setOpenMobile(false);
-      }
-      void router.navigate({
-        to: "/$environmentId/$threadId",
-        params: buildThreadRouteParams(threadRef),
-      });
+      closeMobileSidebar(
+        () =>
+          void router.navigate({
+            to: "/$environmentId/$threadId",
+            params: buildThreadRouteParams(threadRef),
+          }),
+      );
     },
-    [clearSelection, isMobile, router, setOpenMobile, setSelectionAnchor],
+    [clearSelection, closeMobileSidebar, router, setSelectionAnchor],
   );
 
   const handleThreadClick = useCallback(
@@ -1782,20 +1783,19 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
         clearSelection();
       }
       setSelectionAnchor(threadKey);
-      if (isMobile) {
-        setOpenMobile(false);
-      }
-      void router.navigate({
-        to: "/$environmentId/$threadId",
-        params: buildThreadRouteParams(threadRef),
-      });
+      closeMobileSidebar(
+        () =>
+          void router.navigate({
+            to: "/$environmentId/$threadId",
+            params: buildThreadRouteParams(threadRef),
+          }),
+      );
     },
     [
       clearSelection,
-      isMobile,
+      closeMobileSidebar,
       rangeSelectTo,
       router,
-      setOpenMobile,
       setSelectionAnchor,
       toggleThreadSelection,
     ],
@@ -1919,28 +1919,28 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
 
   const createThreadForProjectMember = useCallback(
     (member: SidebarProjectGroupMember) => {
-      if (isMobile) {
-        setOpenMobile(false);
-      }
-      void (async () => {
-        // No options: branch, worktree, and env mode come from the user's
-        // configured defaults, never from the currently viewed thread.
-        const result = await settlePromise(() =>
-          handleNewThread(scopeProjectRef(member.environmentId, member.id)),
-        );
-        if (result._tag === "Failure") {
-          const error = squashAtomCommandFailure(result);
-          toastManager.add(
-            stackedThreadToast({
-              type: "error",
-              title: "Could not create thread",
-              description: error instanceof Error ? error.message : "An error occurred.",
-            }),
-          );
-        }
-      })();
+      closeMobileSidebar(
+        () =>
+          void (async () => {
+            // No options: branch, worktree, and env mode come from the user's
+            // configured defaults, never from the currently viewed thread.
+            const result = await settlePromise(() =>
+              handleNewThread(scopeProjectRef(member.environmentId, member.id)),
+            );
+            if (result._tag === "Failure") {
+              const error = squashAtomCommandFailure(result);
+              toastManager.add(
+                stackedThreadToast({
+                  type: "error",
+                  title: "Could not create thread",
+                  description: error instanceof Error ? error.message : "An error occurred.",
+                }),
+              );
+            }
+          })(),
+      );
     },
-    [handleNewThread, isMobile, setOpenMobile],
+    [closeMobileSidebar, handleNewThread],
   );
 
   const handleCreateThreadClick = useCallback(
@@ -2175,35 +2175,42 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       );
 
       if (clicked === "project-settings") {
-        if (isMobile) setOpenMobile(false);
-        void router.navigate({
-          to: "/projects/$projectKey",
-          params: { projectKey: project.projectKey },
-        });
+        closeMobileSidebar(
+          () =>
+            void router.navigate({
+              to: "/projects/$projectKey",
+              params: { projectKey: project.projectKey },
+            }),
+        );
         return;
       }
 
       if (clicked === "new-thread-on-branch") {
-        // Explicit branch carry-over: reuse the thread's worktree when it
-        // has one, otherwise its branch on the local checkout.
-        const result = await settlePromise(() =>
-          handleNewThread(scopeProjectRef(thread.environmentId, thread.projectId), {
-            branch: thread.branch,
-            worktreePath: thread.worktreePath,
-            envMode: thread.worktreePath ? "worktree" : "local",
-            startFromOrigin: false,
-          }),
+        closeMobileSidebar(
+          () =>
+            void (async () => {
+              // Explicit branch carry-over: reuse the thread's worktree when it
+              // has one, otherwise its branch on the local checkout.
+              const result = await settlePromise(() =>
+                handleNewThread(scopeProjectRef(thread.environmentId, thread.projectId), {
+                  branch: thread.branch,
+                  worktreePath: thread.worktreePath,
+                  envMode: thread.worktreePath ? "worktree" : "local",
+                  startFromOrigin: false,
+                }),
+              );
+              if (result._tag === "Failure") {
+                const error = squashAtomCommandFailure(result);
+                toastManager.add(
+                  stackedThreadToast({
+                    type: "error",
+                    title: "Could not create thread",
+                    description: error instanceof Error ? error.message : "An error occurred.",
+                  }),
+                );
+              }
+            })(),
         );
-        if (result._tag === "Failure") {
-          const error = squashAtomCommandFailure(result);
-          toastManager.add(
-            stackedThreadToast({
-              type: "error",
-              title: "Could not create thread",
-              description: error instanceof Error ? error.message : "An error occurred.",
-            }),
-          );
-        }
         return;
       }
 
@@ -2263,15 +2270,14 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       appSettingsConfirmThreadDelete,
       copyPathToClipboard,
       copyThreadIdToClipboard,
+      closeMobileSidebar,
       deleteThread,
       handleNewThread,
-      isMobile,
       markThreadUnread,
       memberProjectByScopedKey,
       project.projectKey,
       project.workspaceRoot,
       router,
-      setOpenMobile,
       startThreadRename,
     ],
   );
@@ -3074,7 +3080,7 @@ export default function LegacySidebar() {
   const updateSettings = useUpdateClientSettings();
   const handleNewThread = useNewThreadHandler();
   const { archiveThread, deleteThread } = useThreadActions();
-  const { isMobile, setOpenMobile } = useSidebar();
+  const { closeMobileSidebar, isMobile } = useSidebar();
   const routeTarget = useParams({
     strict: false,
     select: (params) => resolveThreadRouteTarget(params),
@@ -3265,15 +3271,15 @@ export default function LegacySidebar() {
         clearSelection();
       }
       setSelectionAnchor(scopedThreadKey(threadRef));
-      if (isMobile) {
-        setOpenMobile(false);
-      }
-      void navigate({
-        to: "/$environmentId/$threadId",
-        params: buildThreadRouteParams(threadRef),
-      });
+      closeMobileSidebar(
+        () =>
+          void navigate({
+            to: "/$environmentId/$threadId",
+            params: buildThreadRouteParams(threadRef),
+          }),
+      );
     },
-    [clearSelection, isMobile, navigate, setOpenMobile, setSelectionAnchor],
+    [clearSelection, closeMobileSidebar, navigate, setSelectionAnchor],
   );
 
   const projectDnDSensors = useSensors(
