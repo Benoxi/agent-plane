@@ -14,3 +14,14 @@ export function shouldShowAssistantMessageMeta(input: {
     !input.streaming
   );
 }
+
+export function shouldShowMessageCopyAction(input: {
+  readonly role: OrchestrationMessageRole;
+  readonly text: string;
+  readonly assistantTurnStillInProgress: boolean;
+  readonly streaming: boolean;
+}): boolean {
+  if (input.role !== "user" && input.role !== "assistant") return false;
+  if (input.text.trim().length === 0 || input.streaming) return false;
+  return input.role === "user" || !input.assistantTurnStillInProgress;
+}
