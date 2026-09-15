@@ -147,7 +147,7 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
   const resolvedPathname = useRouterState({
     select: (state) => state.resolvedLocation?.pathname,
   });
-  const { isMobile, setOpenMobile, open, setOpen } = useSidebar();
+  const { closeMobileSidebar, isMobile, setOpenMobile, open, setOpen } = useSidebar();
   const searchInputRef = useRef<HTMLInputElement>(null);
   const [query, setQuery] = useState("");
   const [activeResultIndex, setActiveResultIndex] = useState(0);
@@ -235,35 +235,34 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
 
   const handleSectionClick = useCallback(
     (to: SettingsPath) => {
-      if (isMobile) {
-        setOpenMobile(false);
-      }
-      void navigate({
-        to,
-        hash: "",
-        replace: true,
-        hashScrollIntoView: false,
-      });
+      closeMobileSidebar(
+        () =>
+          void navigate({
+            to,
+            hash: "",
+            replace: true,
+            hashScrollIntoView: false,
+          }),
+      );
     },
-    [isMobile, navigate, setOpenMobile],
+    [closeMobileSidebar, navigate],
   );
   const handlePageSectionClick = useCallback(
     (to: SettingsPath, targetId: string) => {
-      if (isMobile) {
-        setOpenMobile(false);
-      }
-      if (pathname === to && scrollToSettingsTarget(targetId, { highlight: false })) {
-        return;
-      }
-      void navigate({
-        to,
-        hash: targetId,
-        replace: true,
-        hashScrollIntoView: false,
-        state: { settingsTargetHighlight: false },
+      closeMobileSidebar(() => {
+        if (pathname === to && scrollToSettingsTarget(targetId, { highlight: false })) {
+          return;
+        }
+        void navigate({
+          to,
+          hash: targetId,
+          replace: true,
+          hashScrollIntoView: false,
+          state: { settingsTargetHighlight: false },
+        });
       });
     },
-    [isMobile, navigate, pathname, setOpenMobile],
+    [closeMobileSidebar, navigate, pathname],
   );
   const clearSearch = useCallback(() => {
     setQuery("");
@@ -272,29 +271,28 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
   const handleSearchResultClick = useCallback(
     (item: SettingsSearchItem) => {
       clearSearch();
-      if (isMobile) {
-        setOpenMobile(false);
-      }
       const targetId = item.targetId ?? item.id;
-      if (
-        item.to !== "/settings/projects" &&
-        pathname === item.to &&
-        currentHash.replace(/^#/, "") === targetId
-      ) {
-        scrollToSettingsTarget(targetId);
-        return;
-      }
-      void navigate({
-        to: item.to,
-        search: (previous) =>
-          item.to === "/settings/projects" ? { ...previous, project: undefined } : previous,
-        hash: targetId,
-        replace: true,
-        hashScrollIntoView: false,
-        state: { settingsTargetHighlight: true },
+      closeMobileSidebar(() => {
+        if (
+          item.to !== "/settings/projects" &&
+          pathname === item.to &&
+          currentHash.replace(/^#/, "") === targetId
+        ) {
+          scrollToSettingsTarget(targetId);
+          return;
+        }
+        void navigate({
+          to: item.to,
+          search: (previous) =>
+            item.to === "/settings/projects" ? { ...previous, project: undefined } : previous,
+          hash: targetId,
+          replace: true,
+          hashScrollIntoView: false,
+          state: { settingsTargetHighlight: true },
+        });
       });
     },
-    [clearSearch, currentHash, isMobile, navigate, pathname, setOpenMobile],
+    [clearSearch, closeMobileSidebar, currentHash, navigate, pathname],
   );
   const handleSearchKeyDown = useCallback(
     (event: KeyboardEvent<HTMLInputElement>) => {

@@ -1,11 +1,20 @@
+import { useLayoutEffect } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it } from "vite-plus/test";
+import { act, create, type ReactTestRenderer } from "react-test-renderer";
+import { afterEach, describe, expect, it, vi } from "vite-plus/test";
+
+const mediaQueryState = vi.hoisted(() => ({ isMobile: false }));
+
+vi.mock("~/hooks/useMediaQuery", () => ({
+  useIsMobile: () => mediaQueryState.isMobile,
+}));
 
 import {
   SidebarMenuButton,
   SidebarMenuSubButton,
   SidebarProvider,
   SidebarTrigger,
+  useSidebar,
 } from "./sidebar";
 import {
   MOBILE_SIDEBAR_SWIPE_MIN_DISTANCE,
@@ -22,7 +31,71 @@ function renderSidebarButton(className?: string) {
   );
 }
 
+let renderer: ReactTestRenderer | null = null;
+
+afterEach(async () => {
+  await act(() => renderer?.unmount());
+  renderer = null;
+  mediaQueryState.isMobile = false;
+  vi.unstubAllGlobals();
+});
+
+function MobileSidebarProbe({
+  onReady,
+}: {
+  onReady: (sidebar: ReturnType<typeof useSidebar>) => void;
+}) {
+  const sidebar = useSidebar();
+  useLayoutEffect(() => onReady(sidebar), [onReady, sidebar]);
+  return null;
+}
+
 describe("sidebar interactive cursors", () => {
+  it("runs navigation only after the mobile history sentinel is closed", async () => {
+    mediaQueryState.isMobile = true;
+    const listeners = new Map<string, () => void>();
+    const history = {
+      state: null as Record<string, unknown> | null,
+      back: vi.fn(),
+      pushState: vi.fn((state: Record<string, unknown>) => {
+        history.state = state;
+      }),
+    };
+    vi.stubGlobal("window", {
+      addEventListener: vi.fn((event: string, listener: () => void) =>
+        listeners.set(event, listener),
+      ),
+      removeEventListener: vi.fn((event: string) => listeners.delete(event)),
+      history,
+      location: { href: "https://example.test/thread" },
+    });
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+
+    const sidebarRef: { current: ReturnType<typeof useSidebar> | null } = { current: null };
+    await act(() => {
+      renderer = create(
+        <SidebarProvider>
+          <MobileSidebarProbe
+            onReady={(value) => {
+              sidebarRef.current = value;
+            }}
+          />
+        </SidebarProvider>,
+      );
+    });
+    await act(() => sidebarRef.current?.setOpenMobile(true));
+
+    const navigate = vi.fn();
+    await act(() => sidebarRef.current?.closeMobileSidebar(navigate));
+
+    expect(history.back).toHaveBeenCalledOnce();
+    expect(navigate).not.toHaveBeenCalled();
+
+    await act(() => listeners.get("popstate")?.());
+    expect(navigate).toHaveBeenCalledOnce();
+    expect(sidebarRef.current?.openMobile).toBe(false);
+  });
+
   it("uses mobile sheet visibility for the shared responsive state", () => {
     expect(resolveSidebarState({ isMobile: true, open: true, openMobile: false })).toBe(
       "collapsed",

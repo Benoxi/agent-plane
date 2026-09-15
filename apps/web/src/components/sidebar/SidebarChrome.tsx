@@ -134,7 +134,7 @@ function SidebarUtilityItem({
 export const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
   const navigate = useNavigate();
   const canGoBack = useCanGoBack();
-  const { isMobile, setOpenMobile } = useSidebar();
+  const { closeMobileSidebar } = useSidebar();
   const currentFooterPage = useLocation({
     select: (location) =>
       /^\/settings(?:\/|$)/.test(location.pathname)
@@ -153,37 +153,31 @@ export const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
   const pullRequestsSupported = environments.some(
     (environment) => environment.serverConfig?.environment.capabilities.pullRequests === true,
   );
-  const closeMobileSidebar = useCallback(() => {
-    if (isMobile) {
-      setOpenMobile(false);
-    }
-  }, [isMobile, setOpenMobile]);
   const handlePullRequestsClick = useCallback(() => {
-    closeMobileSidebar();
-    void navigate({
-      to: "/pull-requests",
-      search: readPullRequestListPreferences(),
-    });
+    closeMobileSidebar(
+      () =>
+        void navigate({
+          to: "/pull-requests",
+          search: readPullRequestListPreferences(),
+        }),
+    );
   }, [closeMobileSidebar, navigate]);
   const handleSettingsClick = useCallback(() => {
-    closeMobileSidebar();
-    void navigate({ to: "/settings" });
+    closeMobileSidebar(() => void navigate({ to: "/settings" }));
   }, [closeMobileSidebar, navigate]);
 
   const handleUsageClick = useCallback(() => {
-    if (isMobile) {
-      setOpenMobile(false);
-    }
-    void navigate({ to: "/usage" });
-  }, [isMobile, navigate, setOpenMobile]);
+    closeMobileSidebar(() => void navigate({ to: "/usage" }));
+  }, [closeMobileSidebar, navigate]);
 
   const handleBackClick = useCallback(() => {
-    closeMobileSidebar();
-    if (canGoBack) {
-      window.history.back();
-      return;
-    }
-    void navigate({ to: "/" });
+    closeMobileSidebar(() => {
+      if (canGoBack) {
+        window.history.back();
+        return;
+      }
+      void navigate({ to: "/" });
+    });
   }, [canGoBack, closeMobileSidebar, navigate]);
 
   return (
